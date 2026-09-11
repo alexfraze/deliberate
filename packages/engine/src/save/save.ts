@@ -33,7 +33,8 @@ import { assertSnapshot } from '../store/store.js';
  * Cosmetic components (`dialogue`, `portrait`) are outside the state hash but inside the save:
  * a load has to look right as well as hash right.
  *
- * There is no I/O here. The engine stays pure; `@deliberate/engine/fs` reads and writes the file.
+ * There is no I/O and no clock here. The engine stays pure; `@deliberate/engine/fs` reads and
+ * writes the file, and the caller supplies `savedAt`.
  */
 
 export class SaveError extends Error {
@@ -51,8 +52,12 @@ export interface SaveMeta {
   scene?: string | null;
   /** The GM's memory blocks, as the service last handed them back. */
   memory?: Record<string, unknown>;
-  /** The wall clock. Injected because the engine has none, and so tests can pin the file. */
-  savedAt?: string;
+  /**
+   * When the save was taken, ISO-8601. Required rather than defaulted: the engine has no clock —
+   * `Date.now()` is as forbidden here as `Math.random` — so whoever has one passes it in, the way
+   * the recorder takes `startedAt`.
+   */
+  savedAt: string;
 }
 
 /** Everything needed to resume this engine, as a plain JSON-safe object. */
@@ -60,7 +65,7 @@ export function createSave(engine: Engine, meta: SaveMeta): SaveFile {
   return {
     save: SAVE_VERSION,
     protocol: PROTOCOL_VERSION,
-    savedAt: meta.savedAt ?? new Date().toISOString(),
+    savedAt: meta.savedAt,
     room: meta.room,
     turn: meta.turn,
     seed: meta.seed,
