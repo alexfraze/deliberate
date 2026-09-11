@@ -15,6 +15,10 @@
  */
 
 export type { CreateEngine, Engine, EngineOptions } from './engine.js';
+export * from './grid/index.js';
+export * from './hash/index.js';
+export { createEngine } from './rules/create-engine.js';
 export { createRng, type Rng } from './rules/rng.js';
+export * from './store/index.js';
 
 export const ENGINE_VERSION = '0.0.0' as const;
