@@ -5,7 +5,14 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/node_modules/**', '**/dist/**', '**/coverage/**', 'pnpm-lock.yaml'],
+    ignores: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/coverage/**',
+      'pnpm-lock.yaml',
+      // Python, with its own lint job. Keeps `check` independent of it.
+      'services/gm/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

@@ -1,0 +1,176 @@
+{
+  "$comment": "TEST FIXTURE ONLY. The real contract is contracts/gm-tools.json (ALE-31); this file exists so the Python tests can run before and independently of it. Nothing outside services/gm/tests reads it.",
+  "tools": [
+    {
+      "name": "get_state",
+      "description": "Read part of the world state. Free and changes nothing.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "scope": { "type": "string" } },
+        "required": ["scope"]
+      }
+    },
+    {
+      "name": "legal_actions",
+      "description": "List the actions an entity may legally take right now.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "entity_id": { "type": "string" } },
+        "required": ["entity_id"]
+      }
+    },
+    {
+      "name": "line_of_sight",
+      "description": "Whether a can see b.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "a": { "type": "string" }, "b": { "type": "string" } },
+        "required": ["a", "b"]
+      }
+    },
+    {
+      "name": "path",
+      "description": "A path from a to b within a movement budget.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "a": { "type": "string" },
+          "b": { "type": "string" },
+          "max_cost": { "type": "integer" }
+        },
+        "required": ["a", "b", "max_cost"]
+      }
+    },
+    {
+      "name": "recall",
+      "description": "Recall what is known about a topic.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "topic": { "type": "string" } },
+        "required": ["topic"]
+      }
+    },
+    {
+      "name": "roll_preview",
+      "description": "Report the odds for an action. Does not roll and does not consume the RNG.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "action": { "type": "string" } },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "move",
+      "description": "Move an entity to a tile.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "entity_id": { "type": "string" },
+          "to": {
+            "type": "object",
+            "properties": { "x": { "type": "integer" }, "y": { "type": "integer" } },
+            "required": ["x", "y"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["entity_id", "to"]
+      }
+    },
+    {
+      "name": "attack",
+      "description": "Attack a target with an ability.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "attacker": { "type": "string" },
+          "target": { "type": "string" },
+          "ability": { "type": "string" }
+        },
+        "required": ["attacker", "target", "ability"]
+      }
+    },
+    {
+      "name": "cast",
+      "description": "Cast a spell at a target.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "entity_id": { "type": "string" },
+          "spell": { "type": "string" },
+          "target": { "type": "string" }
+        },
+        "required": ["entity_id", "spell", "target"]
+      }
+    },
+    {
+      "name": "say",
+      "description": "Have an NPC speak. Emits a DialogueLine diff and mutates nothing else.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "npc_id": { "type": "string" },
+          "text": { "type": "string" },
+          "to": { "type": "string" }
+        },
+        "required": ["npc_id", "text", "to"]
+      }
+    },
+    {
+      "name": "set_disposition",
+      "description": "Shift an NPC's disposition toward the player.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "npc_id": { "type": "string" },
+          "delta": { "type": "integer" },
+          "reason": { "type": "string" }
+        },
+        "required": ["npc_id", "delta", "reason"]
+      }
+    },
+    {
+      "name": "spawn",
+      "description": "Spawn an entity from a template at a tile.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "template_id": { "type": "string" },
+          "at": {
+            "type": "object",
+            "properties": { "x": { "type": "integer" }, "y": { "type": "integer" } },
+            "required": ["x", "y"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["template_id", "at"]
+      }
+    },
+    {
+      "name": "set_flag",
+      "description": "Set a world flag.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "key": { "type": "string" }, "value": { "type": "string" } },
+        "required": ["key", "value"]
+      }
+    },
+    {
+      "name": "advance_quest",
+      "description": "Advance a quest to a step.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "quest_id": { "type": "string" }, "step": { "type": "integer" } },
+        "required": ["quest_id", "step"]
+      }
+    },
+    {
+      "name": "end_turn",
+      "description": "End an entity's turn.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "entity_id": { "type": "string" } },
+        "required": ["entity_id"]
+      }
+    }
+  ]
+}
