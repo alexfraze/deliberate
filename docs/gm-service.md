@@ -38,14 +38,15 @@ replays to the same prompt.
 
 Response:
 
-| Field                    | Type               | Notes                                                                     |
-| ------------------------ | ------------------ | ------------------------------------------------------------------------- |
-| `narration`              | string             | Prose for the player. Nothing in it is authoritative.                     |
-| `trace`                  | `ToolCallRecord[]` | Every call the GM made, with the engine's verdict. Goes in the recording. |
-| `stop_reason`            | string             | `end_turn`, `max_tool_steps`, or the model's own stop reason.             |
-| `memory`                 | `MemoryBlocks`     | Updated blocks. **Persist these**; they are the next turn's input.        |
-| `usage`                  | object             | Token usage, including `cache_read_input_tokens`.                         |
-| `prompt_tokens_estimate` | integer            | What the assembled prompt cost, against the 12k budget.                   |
+| Field                    | Type               | Notes                                                                                                     |
+| ------------------------ | ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `narration`              | string             | Prose for the player. Nothing in it is authoritative.                                                     |
+| `trace`                  | `ToolCallRecord[]` | Every call the GM made, with the engine's verdict. Goes in the recording.                                 |
+| `stop_reason`            | string             | `end_turn`, `max_tool_steps`, or the model's own stop reason.                                             |
+| `memory`                 | `MemoryBlocks`     | Updated blocks. **Persist these**; they are the next turn's input.                                        |
+| `usage`                  | object             | Token usage, including `cache_read_input_tokens`.                                                         |
+| `prompt_tokens_estimate` | integer            | What the assembled prompt cost, against the 12k budget.                                                   |
+| `redactions`             | string[]           | What the leakage guard caught on the way out. Empty is normal; a non-empty list belongs in the recording. |
 
 `ToolCallRecord` is `{call_id, tool, input, ok, kind, reason, diff, result, executed, latency_ms}`.
 `executed: false` marks a call the batch-stop discipline skipped.
