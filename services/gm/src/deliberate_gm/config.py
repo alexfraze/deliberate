@@ -4,7 +4,7 @@ CI and a developer shell can all configure the service without editing code."""
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 #: Model defaults are fixed by docs/m1-swarm.md decision 7. `budget_tokens` does not appear
@@ -44,8 +44,10 @@ class Settings:
     #: Base URL of the Node game server. `stub` runs against the in-process stub engine.
     engine_url: str = "http://127.0.0.1:8787"
     engine_timeout_seconds: float = 10.0
-    #: One JSON file, both languages (docs/m1-swarm.md decision 2).
-    tools_path: Path = Path("contracts/gm-tools.json")
+    #: One JSON file, both languages (docs/m1-swarm.md decision 2). Resolved from this
+    #: file's location rather than the working directory, so `Settings()` and
+    #: `Settings.from_env()` find the same contract wherever the service is started from.
+    tools_path: Path = field(default_factory=lambda: _repo_root() / "contracts" / "gm-tools.json")
     #: Hard stop on the agent loop so a turn cannot run forever.
     max_tool_steps: int = 8
     #: MVP budget from the blueprint: <= 12k input tokens per turn.

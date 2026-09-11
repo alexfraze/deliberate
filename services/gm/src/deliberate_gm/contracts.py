@@ -25,31 +25,6 @@ from typing import Any, Literal
 
 ToolKind = Literal["query", "mutation"]
 
-#: Tool names from the blueprint's game-master contract. Two uses, neither of them defining a
-#: schema: checking that a loaded file is the file we think it is, and classifying a contract
-#: written before ALE-31 added per-entry `kind`. Delete the second use — and `_kind_by_name` —
-#: once every entry carries `kind`; a name list here is a second copy of a fact the contract
-#: file owns, and two copies drift.
-QUERY_TOOL_NAMES = (
-    "get_state",
-    "legal_actions",
-    "line_of_sight",
-    "path",
-    "recall",
-    "roll_preview",
-)
-MUTATION_TOOL_NAMES = (
-    "move",
-    "attack",
-    "cast",
-    "say",
-    "set_disposition",
-    "spawn",
-    "set_flag",
-    "advance_quest",
-    "end_turn",
-)
-
 
 class ContractError(RuntimeError):
     """The tool contract is missing or does not describe usable Anthropic tools."""
@@ -111,7 +86,7 @@ def load_contract(path: Path) -> ToolContract:
         if name in kinds:
             raise ContractError(f"Tool {name!r} appears twice in {path}.")
         tools.append(tool)
-        kinds[name] = _kind_of(entry, name)
+        kinds[name] = _kind_of(entry, name, path)
     if not tools:
         raise ContractError(f"GM tool contract at {path} describes no tools.")
     return ToolContract(tools=tuple(tools), kinds=kinds)
@@ -128,16 +103,22 @@ def _entries(raw: Any, path: Path) -> list[Any]:
     return entries
 
 
-def _kind_of(entry: dict[str, Any], name: str) -> ToolKind:
-    """Read the entry's own `kind`, falling back to the blueprint name lists.
+def _kind_of(entry: dict[str, Any], name: str, source: Path) -> ToolKind:
+    """Read the entry's own `kind`. The contract file is the only place this is written down.
 
-    The fallback exists only for a contract written before `kind` was added; an unrecognised
-    name is treated as a mutation, for the same reason `is_mutation` does.
+    A missing or unrecognised `kind` is an error rather than a guess. A name list here would
+    be a second copy of a fact the contract owns, in a second language, and a tool added on
+    one side would have to be remembered on the other — which is the drift the single-file
+    contract exists to prevent.
     """
     declared = str(entry.get("kind", "")).strip().lower()
     if declared in ("query", "mutation"):
         return "query" if declared == "query" else "mutation"
-    return "query" if name in QUERY_TOOL_NAMES else "mutation"
+    raise ContractError(
+        f'Tool {name!r} in {source} has no `kind`. Every entry must declare "query" or '
+        '"mutation": the loop stops a batch at the first rejected mutation and lets a '
+        "rejected query pass, and it has no other way to tell them apart."
+    )
 
 
 def load_tools(path: Path) -> list[dict[str, Any]]:
@@ -148,9 +129,23 @@ def load_tools(path: Path) -> list[dict[str, Any]]:
 def normalize_tool(entry: dict[str, Any], *, source: Path | str = "<memory>") -> dict[str, Any]:
     """Turn one contract entry into an Anthropic tool definition.
 
-    `strict` is a top-level field on the tool (not on `tool_choice`), and strict mode
-    requires `additionalProperties: false` plus `required`. We set all three rather than
-    trusting the file, so a schema that forgets one still gets validated arguments.
+    **No `strict: true`.** It was in the original design as belt-and-braces, and a live call
+    with the real 15-tool contract showed it does not survive contact with this tool set. It
+    fails two independent ways: strict mode rejects JSON Schema keywords the contract
+    legitimately uses (`minimum` x16, `minLength`/`maxLength` x4 each, `maximum` x3) with
+    `For 'integer' type, property 'minimum' is not supported`, and with every one of those
+    stripped the same 15 tools return `Schema is too complex.` Stripping the keywords is
+    therefore not a workaround: it loses real constraints and still 400s. Without `strict`
+    the identical payload returns 200.
+
+    Nothing is lost that the engine was not already doing. The engine is the authority, and
+    every mutation goes through `packages/engine/src/gm/validate.ts` before it touches state.
+    A malformed tool call comes back as a rejected call with a player-readable reason, which
+    is the designed behaviour rather than a degradation of it.
+
+    `additionalProperties: false` and a full `required` stay on the outgoing schema. They are
+    ordinary JSON Schema, the API accepts them, they document intent, and the engine
+    validator enforces them.
     """
     name = str(entry.get("name", "")).strip()
     if not name:
@@ -170,7 +165,6 @@ def normalize_tool(entry: dict[str, Any], *, source: Path | str = "<memory>") ->
     return {
         "name": name,
         "description": str(entry.get("description", "")).strip(),
-        "strict": True,
         "input_schema": schema,
     }
 

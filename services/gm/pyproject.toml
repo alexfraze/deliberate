@@ -57,3 +57,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# `live` tests spend money and need a key. Excluded from the default run so CI -- which has
+# no key -- never tries, and so nobody bills a turn by typing `pytest`. Run them on purpose:
+#   source ~/.deliberate-env && uv run pytest -m live
+addopts = ["-m", "not live"]
+markers = ["live: sends a real request to the Claude API; needs ANTHROPIC_API_KEY"]

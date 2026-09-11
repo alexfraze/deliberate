@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..models import MemoryBlocks
+from ..tokens import CHARS_PER_TOKEN
 from . import ledger as ledger_module
 from .notes import CAPS
 
@@ -29,8 +30,8 @@ LEDGER_SHED_STEP = 4
 
 
 def estimate(text: str) -> int:
-    """Same ~4 characters per token as the rest of the budget arithmetic."""
-    return max(0, len(text) // 4)
+    """The same measured characters-per-token as the rest of the budget arithmetic."""
+    return max(0, int(len(text) / CHARS_PER_TOKEN))
 
 
 def render(memory: MemoryBlocks, *, budget: int) -> tuple[str, MemoryBlocks]:
