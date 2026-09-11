@@ -79,6 +79,44 @@ describe('parseClientFrame', () => {
 });
 
 describe('isIntent', () => {
+  it('accepts the two ALE-31 intents a player composes', () => {
+    expect(isIntent({ kind: 'cast', caster: 'p', spell: 'fire-bolt', target: 'd' })).toBe(true);
+    expect(isIntent({ kind: 'say', speaker: 'p', text: 'Hail.', to: 'guard' })).toBe(true);
+    expect(isIntent({ kind: 'say', speaker: 'p', text: 'Hail.', to: null })).toBe(true);
+    expect(isIntent({ kind: 'say', speaker: 'p', text: '', to: null })).toBe(false);
+    expect(isIntent({ kind: 'say', speaker: 'p', text: 'x'.repeat(2_001), to: null })).toBe(false);
+    expect(isIntent({ kind: 'cast', caster: 'p', spell: 'fire-bolt' })).toBe(false);
+  });
+
+  /**
+   * The authority boundary, not a shape check. The engine validates whether a `spawn` names a real
+   * template; it has no idea who asked, by design. So "a person at a keyboard may not author the
+   * world" is enforced by never parsing these four off a socket — they reach the engine only as
+   * tool calls on `POST /gm/tool`.
+   */
+  it.each(['set_disposition', 'spawn', 'set_flag', 'advance_quest'])(
+    'refuses the world-authoring intent %s off the wire',
+    (kind) => {
+      expect(
+        isIntent({
+          kind,
+          entity: 'guard',
+          toward: 'player',
+          delta: 100,
+          reason: 'because I said so',
+          template: 'guard',
+          at: { x: 1, y: 1 },
+          map: null,
+          id: null,
+          key: 'gatehouse.gate.sealed',
+          value: false,
+          quest: 'carry-the-scout',
+          step: 3,
+        }),
+      ).toBe(false);
+    },
+  );
+
   it('rejects anything that is not a shaped M0 intent', () => {
     expect(isIntent(null)).toBe(false);
     expect(isIntent({ kind: 'move', entity: '', to: { x: 0, y: 0 } })).toBe(false);

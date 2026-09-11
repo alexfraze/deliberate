@@ -10,6 +10,10 @@ coverage/
 !.env.example
 recordings/*.jsonl
 !recordings/.gitkeep
+# The M1 acceptance evidence (ALE-17): the JSONL a real ten-turn playthrough against the live
+# model wrote. Committed on purpose, so `pnpm check` re-checks the milestone's exit criteria on a
+# machine with no API key -- see packages/server/src/acceptance.test.ts.
+!recordings/m1-acceptance.jsonl
 test-results/
 playwright-report/
 e2e/.recordings/
