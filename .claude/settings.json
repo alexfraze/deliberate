@@ -1,4 +1,22 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(pnpm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(tsx:*)",
+      "Bash(corepack:*)",
+      "Bash(git:*)",
+      "Bash(curl:*)",
+      "mcp__github",
+      "mcp__Linear",
+      "WebFetch(domain:linear.app)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:threejs.org)",
+      "WebFetch(domain:fastify.dev)",
+      "WebFetch(domain:vitest.dev)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {

@@ -43,15 +43,20 @@ already in). Everything else is disjoint by construction.
    read the repo and open PRs through the API but every `git push` is refused with a 403, which
    is exactly where each swarm agent would stall.
 1. `main` must exist with the scaffold on it and be the default branch.
-2. GitHub → Settings → General → enable **Allow auto-merge** and **Automatically delete head
+1. `.claude/settings.json` on `main` carries a `permissions.allow` list for pnpm, git, the
+   GitHub and Linear MCP servers, and a few doc domains. Without it, Auto mode stops each agent
+   with an approval prompt on its first Linear status update or PR creation, and an unanswered
+   prompt blocks that session for the night. Sessions read the file at startup, so launch only
+   after it is on `main`.
+1. GitHub → Settings → General → enable **Allow auto-merge** and **Automatically delete head
    branches**.
-3. GitHub → Settings → Branches → add a rule for `main`: require the `check` status check to pass.
+1. GitHub → Settings → Branches → add a rule for `main`: require the `check` status check to pass.
    Do not require reviews (nobody is awake to give them). Agents can then enable auto-merge on
    their own PRs and the night runs itself.
-4. Launch four cloud sessions on `alexfraze/deliberate` with the prompts below (environment
+1. Launch four cloud sessions on `alexfraze/deliberate` with the prompts below (environment
    `alex-cloud`, permission mode that allows pushes). Attach the Linear connector if you want
    issue status kept current; it is optional.
-5. Optional: a fifth session with the E prompt, told to wait for the four PRs to merge (it will
+1. Optional: a fifth session with the E prompt, told to wait for the four PRs to merge (it will
    poll `main`). Otherwise launch E in the morning.
 
 Anthropic API keys, Blender, GPUs, and the ARC-AGI-3 code are **not** needed for M0.
