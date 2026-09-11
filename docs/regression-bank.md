@@ -19,16 +19,24 @@ what makes that affordable.
 `recordings/bank/` is the bank: one JSONL recording per session, plus `bank.json`, which names each
 session, what counts as its objective, and the numbers it produced.
 
-| session                | source | turns | what it is there to catch                                                 |
-| ---------------------- | ------ | ----- | ------------------------------------------------------------------------- |
-| `m1-acceptance`        | live   | 56    | a real `claude-opus-5` playthrough (ALE-17); the only model-written entry |
-| `m0-yard-skirmish`     | engine | 6     | a death: damage, the `dead` condition, the clock, a corpse refusing       |
-| `gatehouse-refusals`   | engine | 9     | every mutation kind refused; a whole session that changes nothing         |
-| `gatehouse-initiative` | engine | 9     | four combatants, initiative wrapping twice into round three               |
-| `gatehouse-gm-tools`   | engine | 12    | all nine mutation tools through `executeGmTool`, `spawn` included         |
+| session                | source | turns | what it is there to catch                                                        |
+| ---------------------- | ------ | ----- | -------------------------------------------------------------------------------- |
+| `m1-acceptance`        | live   | 56    | ALE-17: a drawn sword, and a game master that answered by opening the gate       |
+| `yard-brawl`           | live   | 58    | ALE-25: a **death** a real model caused — two of them, and initiative wrapping   |
+| `parley`               | live   | 62    | ALE-25: ten turns with no encounter at all; flags, dispositions, two quest steps |
+| `m0-yard-skirmish`     | engine | 6     | a death: damage, the `dead` condition, the clock, a corpse refusing              |
+| `gatehouse-refusals`   | engine | 9     | every mutation kind refused; a whole session that changes nothing                |
+| `gatehouse-initiative` | engine | 9     | four combatants, initiative wrapping twice into round three                      |
+| `gatehouse-gm-tools`   | engine | 12    | all nine mutation tools through `executeGmTool`, `spawn` included                |
 
-The live entry cost money and half an hour and is never regenerated: its bytes are evidence. The
-engine-driven four are a pure function of the engine and the seeds, written by
+The three live entries cost roughly $2 and half an hour each and are never regenerated: their
+bytes are evidence. They are three different stories on purpose — three recordings of the same
+beats would only be the first recording weighed three times, and a regression that shows up only
+in combat, or only in dialogue, needs somewhere to fail. `SCRIPTS` in
+`packages/server/src/acceptance.test.ts` is what they were played from; `DELIBERATE_SCRIPT` picks
+one and `DELIBERATE_WRITE_FIXTURE=1` copies the result into this directory.
+
+The engine-driven four are a pure function of the engine and the seeds, written by
 `packages/server/src/bank/generate.ts`. The test regenerates them and holds the result to the
 committed bytes, so a rules change shows up as a diff rather than as a silent rewrite.
 
@@ -104,7 +112,27 @@ nothing about the recordings changed, every session still replays — and the ba
 
 Prefer a deterministic one: add a `Scenario` to `generate.ts`, run `bank:write`, read the diff,
 commit. A live entry is worth it only when it shows something the engine cannot be scripted into —
-a real model's tool sequence — and it is added by committing the recording and a manifest row.
+a real model's tool sequence.
+
+A live entry is a `Playthrough` in `packages/server/src/acceptance.test.ts` and a row in `LIVE` in
+`packages/server/src/bank/write.ts`, and then:
+
+```sh
+source ~/.deliberate-env
+DELIBERATE_SCRIPT=<name> DELIBERATE_WRITE_FIXTURE=1 \
+  DELIBERATE_RECORDINGS=recordings/live \
+  pnpm --filter @deliberate/server test -- acceptance   # ~$2 and ~15 minutes
+git add recordings/bank/<name>.jsonl && git commit      # before anything else
+pnpm --filter @deliberate/server bank:write             # derives the manifest row
+```
+
+**Commit the recording the moment it exists.** Three live playthroughs were run for ALE-24's
+effort comparison, reported in `config.py`, and then lost — not committed, never on disk again.
+That is roughly $6 and three ready-made bank entries gone, and the table they produced can no
+longer be checked against anything. A live recording that is not committed does not exist. The
+free policy suite exists for the same reason in miniature: it plays every script against a
+scripted game master first, so a script that cannot reach a kill is found out before the money is
+spent rather than after.
 
 ## One thing the bank found
 

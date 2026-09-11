@@ -51,12 +51,38 @@ function clone(name: string): BankEntry {
 }
 
 describe('the regression bank', () => {
-  it('has the live playthrough and the generated sessions', () => {
-    expect(bank.length).toBeGreaterThanOrEqual(6);
+  it('has the three live playthroughs and the generated sessions', () => {
+    // ALE-25's gate is stated in playthroughs, so the count is asserted here rather than left to
+    // whoever reads the manifest: three sessions a real `claude-opus-5` wrote, each replaying.
+    expect(bank.length).toBeGreaterThanOrEqual(8);
     expect(bank.filter((e) => e.session.source === 'live').map((e) => e.session.name)).toEqual([
       'm1-acceptance',
+      'yard-brawl',
+      'parley',
     ]);
     expect(bank.filter((e) => e.session.source === 'engine').length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('covers three different stories, not one story recorded three times', () => {
+    // Three recordings of the same beats would be the first recording weighed three times. What
+    // makes them three playthroughs is that the world ends up somewhere different in each.
+    const live = ['m1-acceptance', 'yard-brawl', 'parley'];
+    const hashes = live.map((n) => runBank(bank, createEngine).sessions.find((s) => s.name === n)!);
+    expect(new Set(hashes.map((s) => s.metrics.finalHash)).size).toBe(3);
+
+    const diffs = (name: string) =>
+      new Set(
+        lines(name)
+          .filter((l): l is RecordedTurn => l.line === 'turn')
+          .flatMap((t) => t.diffs.map((d) => d.type)),
+      );
+    // The brawl is the live recording with a death in it — the thing ALE-17's run never produced
+    // and the reason a second live session was worth the money.
+    expect([...diffs('yard-brawl')]).toContain('ConditionSet');
+    expect(hashes[1]!.metrics.objectiveTurn).not.toBeNull();
+    expect(hashes[1]!.metrics.intents).toContain('attack');
+    // The parley never draws: no attack anywhere in it, from the player or the game master.
+    expect(hashes[2]!.metrics.intents).not.toContain('attack');
   });
 
   it('replays every session to identical hashes and identical metrics', () => {

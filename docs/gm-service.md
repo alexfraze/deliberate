@@ -246,8 +246,10 @@ Fixed by decision 7, and easy to get wrong from memory:
 - thinking is `{"type": "adaptive"}` — `budget_tokens` is removed on this model and returns a 400;
 - depth is `output_config={"effort": ...}` — `effort` lives inside `output_config`. The default is
   `medium` from ALE-24, measured rather than chosen: against `high` it clears M3's "p50 after GO
-  under 10 s" with margin, cuts the p95 tail 2.9×, saves 28% a turn, and the game master still does
-  as much. `GM_EFFORT` overrides it; the numbers are in `config.py`.
+  under 10 s" with margin, cuts the p95 tail, saves about a quarter of the price a turn, and the
+  game master still does as much. ALE-25 re-measured it on two committed recordings — 8.0 s and
+  8.1 s p50 after GO — because the recordings ALE-24's table was read from were never committed
+  and no longer exist. `GM_EFFORT` overrides it; the numbers and that caveat are in `config.py`.
 - requests stream, and `max_tokens` is the streaming ceiling;
 - no assistant prefill — it returns a 400;
 - no `strict: true` on tools — see "Tools" above.

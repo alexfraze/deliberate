@@ -266,30 +266,36 @@ const SCRIPTS: Record<string, Playthrough> = {
   },
 
   /**
-   * ALE-25. The player robs the yard instead of pleading with it: closes on Ilva, demands her pack
-   * at swordpoint and cuts her down, then keeps swinging. Ilva is 9 hp behind AC 11 and the warden
-   * is walled off in the north half of the map, so the fight really resolves inside ten turns
-   * rather than trailing off — which is the point, because **someone has to die** here. The live
-   * M1 session never produced a death, and a death is where damage, the `dead` condition, a corpse
-   * refusing to be hit and a game master reacting to a killing all meet.
+   * ALE-25. The player crosses the yard and finishes the man they came to carry out of it.
+   *
+   * **Someone has to die here**, because no live session has ever produced a death and a death is
+   * where damage, the `dead` condition, a corpse refusing to be hit and a game master reacting to
+   * a killing all meet. Getting one cost two runs and about $5 to learn how, and the lesson is
+   * that the target has to be chosen by arithmetic rather than by drama. The first two brawls went
+   * after Ilva — 9 hp behind AC 11, which needs two landed hits — and both left her alive: the
+   * player gets one swing every *other* beat at best, because a swing and the `end_turn` that
+   * refreshes the action cannot share a turn, so ten beats buy three or four attacks, and three or
+   * four attacks against 9 hp is a coin toss that came up tails twice. The game master also spent
+   * both runs walking her out of reach, which is the world doing its job.
+   *
+   * Brannoc is 4 hp behind AC 12 and **prone**, so a melee swing has advantage and any landed hit
+   * is lethal. One hit, not two, and a prone man is not walking anywhere. The eight strike beats
+   * are what is left after two beats of crossing the yard; once he is down they fall through to
+   * whoever else is in reach, which is how the rest of the yard gets drawn in.
    */
   'yard-brawl': {
     file: 'yard-brawl.jsonl',
     beats: [
-      { do: 'approach', target: MERCHANT_ID },
-      say(
-        MERCHANT_ID,
-        'That pack. Set it down and step back, and nobody in this yard bleeds.',
-        'I level the longsword at Ilva and demand her pack. I am not asking twice.',
-      ),
-      { do: 'strike', target: MERCHANT_ID },
-      { do: 'strike', target: MERCHANT_ID },
-      { do: 'strike', target: MERCHANT_ID },
-      { do: 'strike', target: MERCHANT_ID },
-      { do: 'fight' },
-      { do: 'fight' },
-      { do: 'fight' },
-      { do: 'fight' },
+      { do: 'approach', target: SCOUT_ID },
+      { do: 'approach', target: SCOUT_ID },
+      { do: 'strike', target: SCOUT_ID },
+      { do: 'strike', target: SCOUT_ID },
+      { do: 'strike', target: SCOUT_ID },
+      { do: 'strike', target: SCOUT_ID },
+      { do: 'strike', target: SCOUT_ID },
+      { do: 'strike', target: SCOUT_ID },
+      { do: 'strike', target: SCOUT_ID },
+      { do: 'strike', target: SCOUT_ID },
     ],
     intents: ['say', 'move', 'attack', 'end_turn'],
     tools: ['say'],
@@ -430,17 +436,24 @@ function candidates(beat: Beat, snapshot: Snapshot): Intent[] {
     const target = nearby.includes(beat.target) ? beat.target : nearby[0];
     return [...toward(target), ...fallback];
   }
-  // A swing, at a named target or at whoever is in reach. Out of reach or out of action, the two
-  // ways out are to close the distance and to end the turn — and which comes first is not
-  // cosmetic. `strike` is hunting one body, so it closes before it passes; `fight` passes first,
-  // which is how the M1 run got initiative into the game master's hands at all. Out of combat
+  // A swing, at a named target or at whoever is in reach. When the swing is refused there are two
+  // ways out — close the distance, or pass the turn — and which comes first is the difference
+  // between a fight and a shuffle. The first `yard-brawl` run closed first and cost $2.59 to
+  // learn why: the player hit Ilva once, spent its action, and then had *movement* left, so every
+  // later beat took a step instead of ending the turn. The turn never passed, the action never
+  // came back, and ten turns of a brawl contained exactly one sword swing.
+  //
+  // So the order depends on why the swing failed. Already in reach means the action is what is
+  // missing, and only ending the turn brings it back. Out of reach means the distance is what is
+  // missing, and ending the turn would just hand the game master another free move. Out of combat
   // `end_turn` is refused ("no encounter is running"), so both orders walk.
   const adjacent = me ? nearby.filter((id) => chebyshev(me, positionOf(snapshot, id)!) <= 1) : [];
   const hunted = beat.do === 'strike' && nearby.includes(beat.target) ? beat.target : undefined;
   const targets = [...(hunted ? [hunted] : []), ...adjacent.filter((id) => id !== hunted)];
   const pass: Intent = { kind: 'end_turn', entity: PLAYER };
   const close = toward(hunted ?? targets[0] ?? nearby[0]);
-  return [...targets.map(swing), ...(hunted ? [...close, pass] : [pass, ...close]), ...fallback];
+  const inReach = hunted ? adjacent.includes(hunted) : targets.length > 0;
+  return [...targets.map(swing), ...(inReach ? [pass, ...close] : [...close, pass]), ...fallback];
 }
 
 /**
@@ -511,12 +524,13 @@ describe('the playthrough policy', () => {
     expect(snapshot.initiative).not.toBeNull();
   });
 
-  it('yard-brawl kills the merchant even with nobody defending her', () => {
+  it('yard-brawl kills the scout, with a game master that only passes the turn', () => {
     // The script's whole reason to exist is a death, so the death is checked here, for free,
-    // before any money is spent finding out that the player could not reach her.
+    // before any money is spent finding out that the player could not reach him or could not
+    // swing often enough. Two live runs were spent learning exactly that.
     const { kinds, snapshot } = play('yard-brawl');
     expect(kinds).toContain('attack');
-    expect(snapshot.entities[MERCHANT_ID]?.components.health?.conditions).toContain('dead');
+    expect(snapshot.entities[SCOUT_ID]?.components.health?.conditions).toContain('dead');
   });
 
   it('parley never draws the sword', () => {
@@ -571,7 +585,11 @@ describe.skipIf(!live)(`${SCRIPT}: a ten-turn playthrough against the live model
   beforeAll(async () => {
     const [nodePort, gmPort] = [await freePort(), await freePort()];
     nodeUrl = `http://127.0.0.1:${nodePort}`;
-    recordingsDir = mkdtempSync(join(tmpdir(), 'deliberate-ale17-'));
+    // A live run is roughly $2 and half an hour, so where its bytes land is not a detail:
+    // `DELIBERATE_RECORDINGS` puts them somewhere durable, and the temp dir is only the default
+    // for a smoke test nobody wants to keep.
+    recordingsDir =
+      process.env['DELIBERATE_RECORDINGS'] ?? mkdtempSync(join(tmpdir(), 'deliberate-live-'));
 
     const inner = httpGmService({
       baseUrl: `http://127.0.0.1:${gmPort}`,
@@ -610,7 +628,7 @@ describe.skipIf(!live)(`${SCRIPT}: a ten-turn playthrough against the live model
   afterAll(async () => {
     gmProcess?.kill('SIGTERM');
     await app?.close();
-    if (!process.env['DELIBERATE_KEEP_RECORDING'])
+    if (!process.env['DELIBERATE_KEEP_RECORDING'] && !process.env['DELIBERATE_RECORDINGS'])
       rmSync(recordingsDir, { recursive: true, force: true });
   });
 

@@ -28,6 +28,23 @@ DEFAULT_MODEL = "claude-opus-5"
 #: mutations, 43% fewer than `high`. That is a game-design call about how much the game master
 #: should do per turn, not a latency decision, so it is left to `GM_EFFORT=low` rather than taken
 #: here. `GM_EFFORT` is the one-line change either way.
+#:
+#: **The three recordings that table was read from were never committed and are gone**, so the
+#: `high` and `low` rows cannot be checked against anything any more. ALE-25 re-measured `medium`
+#: on two playthroughs whose bytes *are* in `recordings/bank/`, and the row holds where it matters
+#: and does not where it does not:
+#:
+#:     session       preview p50   after-GO p50   after-GO p95   $/turn
+#:     yard-brawl      30.3 s          8.0 s         27.6 s      $0.2086
+#:     parley          27.1 s          8.1 s         10.8 s      $0.1711
+#:
+#: after-GO p50 reproduces (8.0-8.1 s against 8.8 s) and still clears the ten-second gate. Preview
+#: is worse than the table says (27-30 s against 23.5 s). The p95 and the price are not properties
+#: of the effort setting at all, they are properties of the *session*: the combat run's tail is
+#: 2.6x the dialogue run's, because a turn where several NPCs each cost a model call is several
+#: model calls. That is ALE-37 (NPC code brains), not effort tuning.
+#:
+#: `pnpm meters recordings/bank/<name>.jsonl` re-prints both rows with no key and no network.
 DEFAULT_EFFORT = "medium"
 
 

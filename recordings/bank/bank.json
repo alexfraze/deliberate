@@ -4,7 +4,7 @@
       "name": "m1-acceptance",
       "file": "m1-acceptance.jsonl",
       "source": "live",
-      "description": "The M1 acceptance run (ALE-17): ten player turns against the live model, 56 mutations, the game master talking the yard down instead of swinging. The only entry a model actually wrote, and the reason the bank is worth having — a rules, hash or diff change that a unit test would not notice fails against a real session here, for free, forever.",
+      "description": "The M1 acceptance run (ALE-17): ten player turns against the live model, 56 mutations, the game master talking the yard down instead of swinging. The first entry a model actually wrote, and the reason the bank is worth having — a rules, hash or diff change that a unit test would not notice fails against a real session here, for free, forever.",
       "objective": {
         "type": "QuestAdvanced",
         "where": {
@@ -16,6 +16,43 @@
         "rejected": 1,
         "finalHash": "ac96bc8acbaa65ec24e25278eeb9ecafafbc6beb66993a06c4854e5f7156c51401fba8fab1a79e9f0c9c3c1636d470324840ac76ae87892685ea0187e2927ac8",
         "objectiveTurn": 27
+      }
+    },
+    {
+      "name": "yard-brawl",
+      "file": "yard-brawl.jsonl",
+      "source": "live",
+      "description": "ALE-25, and the first live recording with a death in it: the player crosses the yard, kills Brannoc where he lies, and is killing Halloran by the end of the tenth turn. Four player attacks, three landed, two fatal. Everything the M1 run could not reach is here — damage, the `dead` condition, initiative wrapping, the action economy spending down — written by a real model rather than by a seeded script, which is the difference between this and `m0-yard-skirmish`. It took three live runs to get: two earlier brawls went after Ilva's 9 hp, needed two landed hits, and got one.",
+      "objective": {
+        "type": "ConditionSet",
+        "where": {
+          "condition": "dead",
+          "active": true
+        }
+      },
+      "expect": {
+        "turns": 58,
+        "rejected": 2,
+        "finalHash": "177f1373cae679023c822aecd35e818963b7440fb2cbf5cef1fd92c90595ac3b58fcee863ac368b66522d10530d2b14be06facfcf40a7fc0e43fc1aecf0b310e",
+        "objectiveTurn": 6
+      }
+    },
+    {
+      "name": "parley",
+      "file": "parley.jsonl",
+      "source": "live",
+      "description": "ALE-25, the playthrough in which the sword never leaves the scabbard: ten player turns of nothing but speech and movement, and a game master that answers with 28 lines of dialogue, nine flags, eight dispositions and two quest steps — it names the man who cut Brannoc open, gets Ilva to half-vouch, unseals the gate, takes the player as surety and sends a runner up the chain. No encounter ever starts, so no initiative, no action economy and no damage appear anywhere in it, which is exactly what makes it worth keeping beside the other two: it is the only live session that drives the world-authoring tools in bulk, and the only one in which the engine's turn machinery is never touched at all.",
+      "objective": {
+        "type": "QuestAdvanced",
+        "where": {
+          "quest": "carry-the-scout"
+        }
+      },
+      "expect": {
+        "turns": 62,
+        "rejected": 1,
+        "finalHash": "a64231ce0204df1a2cf0e23281ac0950a59029928a396232f01eba383f940b2a8af14b0978294acc004519a94be78ecaa029527d410f421590d40d680c5ba15a",
+        "objectiveTurn": 15
       }
     },
     {
