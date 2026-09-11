@@ -179,12 +179,29 @@ export interface World {
   maps: Record<MapId, MapRecord>;
 }
 
-/** Turn order for the current encounter. TODO(ALE-9). */
+/**
+ * What the acting entity has spent this turn (ALE-9). SRD 5.1 trimmed: one move (up to
+ * `Stats.speed` feet, spendable in pieces), one action, one bonus action. Reset when the turn
+ * advances. Part of the state hash because it decides which intents are legal.
+ */
+export interface TurnEconomy {
+  /** Feet of movement already used this turn. */
+  movedFt: number;
+  actionUsed: boolean;
+  bonusActionUsed: boolean;
+}
+
+/**
+ * Turn order for the current encounter; `null` on the snapshot means no encounter is running
+ * (exploration: anyone alive may move, nobody may attack until the first attack starts one).
+ */
 export interface InitiativeState {
   order: EntityId[];
   /** Index into `order` of the entity whose turn it is. */
   current: number;
   round: number;
+  /** Economy of the entity at `order[current]`. Absent means a fresh turn (ALE-9 reads it as all-unspent). */
+  turn?: TurnEconomy;
 }
 
 /** Full authoritative state. The client receives this on join and never mutates it. */
