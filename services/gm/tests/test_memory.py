@@ -14,15 +14,15 @@ from deliberate_gm.models import LedgerEntry, MemoryBlocks, ToolCallRecord
 from .conftest import say
 
 
-def build(llm, engine, tools, settings, **kwargs):
-    return GmAgent(llm=llm, engine=engine, tools=tools, settings=settings, **kwargs)
+def build(llm, engine, contract, settings, **kwargs):
+    return GmAgent(llm=llm, engine=engine, contract=contract, settings=settings, **kwargs)
 
 
 # -- the ledger records the engine, not the model ------------------------------------------
 
 
 def test_the_ledger_records_the_engine_not_the_model_claim(
-    engine, tools, settings, turn_request
+    engine, contract, settings, turn_request
 ) -> None:
     """The model says it hit for 12. The engine says the target is out of range.
 
@@ -57,7 +57,7 @@ def test_the_ledger_records_the_engine_not_the_model_claim(
         ]
     )
 
-    response = build(llm, engine, tools, settings).run_turn(turn_request)
+    response = build(llm, engine, contract, settings).run_turn(turn_request)
 
     assert len(response.memory.ledger) == 1
     entry = response.memory.ledger[0]
@@ -72,7 +72,7 @@ def test_the_ledger_records_the_engine_not_the_model_claim(
 
 
 def test_the_model_claim_survives_only_as_its_own_note(
-    engine, tools, settings, turn_request
+    engine, contract, settings, turn_request
 ) -> None:
     """The world-model block is the model's, so its belief is kept -- clearly labelled as a
     note it must revise, and sitting next to a ledger line that contradicts it."""
@@ -94,7 +94,7 @@ def test_the_model_claim_survives_only_as_its_own_note(
             say("The blow falls short."),
         ]
     )
-    response = build(llm, engine, tools, settings).run_turn(turn_request)
+    response = build(llm, engine, contract, settings).run_turn(turn_request)
     assert response.memory.world_model == ["npc:gorm is nearly dead."]
     text, _ = blocks.render(response.memory, budget=4000)
     assert "## World model" in text
@@ -201,7 +201,7 @@ def test_rendering_returns_the_memory_that_was_actually_rendered() -> None:
 
 
 def test_a_thirty_turn_session_stays_under_the_input_budget(
-    engine, tools, settings, turn_request
+    engine, contract, settings, turn_request
 ) -> None:
     """ALE-15's acceptance: 30 turns, prompt under budget, ledger reflecting the engine."""
     engine.accept("move", diff=[{"type": "EntityMoved", "entity": "pc:ari"}])
@@ -254,7 +254,7 @@ def test_a_thirty_turn_session_stays_under_the_input_budget(
                 "state": {"entities": ["pc:ari", "npc:gorm"], "tick": turn},
             }
         )
-        response = build(llm, engine, tools, agent_settings).run_turn(request)
+        response = build(llm, engine, contract, agent_settings).run_turn(request)
         memory = response.memory
         applied += 1
         rejected += 1
@@ -320,7 +320,7 @@ def test_a_note_about_an_unknown_entity_is_dropped() -> None:
 
 
 def test_the_agent_drops_notes_the_engine_cannot_vouch_for(
-    engine, tools, settings, turn_request
+    engine, contract, settings, turn_request
 ) -> None:
     llm = ScriptedLLM(
         [
@@ -330,7 +330,7 @@ def test_the_agent_drops_notes_the_engine_cannot_vouch_for(
             )
         ]
     )
-    response = build(llm, engine, tools, settings).run_turn(turn_request)
+    response = build(llm, engine, contract, settings).run_turn(turn_request)
     assert response.memory.world_model == ["npc:gorm blocks the north road."]
 
 
