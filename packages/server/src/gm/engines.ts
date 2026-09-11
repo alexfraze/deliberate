@@ -45,6 +45,19 @@ export interface EngineRegistry {
   release(token: string): void;
   /** Live clones outstanding. Tests assert this returns to zero. */
   clones(): number;
+  /**
+   * Closes the live engine to mutations for the duration of a preview, with the reason a refused
+   * call gets back. `null` reopens it.
+   *
+   * Belt to the clone's braces. A preview is isolated because the GM is handed a clone's token and
+   * has no other handle on the world — but "has no handle" depends on a process on the other side
+   * of an HTTP hop echoing the token it was given. A model that hallucinated `"live"`, or a bug in
+   * the service, would otherwise write to the real world during a speculative turn. Queries stay
+   * free: reading the live world during a preview is harmless and occasionally correct.
+   */
+  seal(reason: string | null): void;
+  /** The reason live mutations are currently closed, or `null`. */
+  sealed(): string | null;
 }
 
 export interface EngineRegistryOptions {
@@ -72,6 +85,7 @@ export function createEngineRegistry(options: EngineRegistryOptions): EngineRegi
   // Insertion-ordered, so the first key is the oldest clone.
   const speculative = new Map<string, EngineHandle>();
   let minted = 0;
+  let seal: string | null = null;
 
   return {
     live,
@@ -99,5 +113,9 @@ export function createEngineRegistry(options: EngineRegistryOptions): EngineRegi
       speculative.delete(token);
     },
     clones: () => speculative.size,
+    seal(reason) {
+      seal = reason;
+    },
+    sealed: () => seal,
   };
 }

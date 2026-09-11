@@ -110,6 +110,11 @@ export function executeGmToolRequest(deps: GmToolDeps, request: GmToolRequest): 
     );
   }
 
+  if (handle.live && kind === 'mutation') {
+    const sealed = deps.registry.sealed();
+    if (sealed) return refuse(sealed, kind);
+  }
+
   const call: GmToolCall = {
     name: request.tool,
     args: request.input,

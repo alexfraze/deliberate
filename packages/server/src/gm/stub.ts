@@ -19,6 +19,11 @@ import type { GmToolRequest, GmToolResponse } from './tool.js';
 export interface ScriptedCall {
   tool: string;
   input?: Record<string, unknown>;
+  /**
+   * Aim this call at an engine other than the one `/turn` named. A correct service always echoes
+   * the token it was given; this exists so a test can play a service that does not.
+   */
+  token?: string;
 }
 
 /** What the scripted GM does for one `/turn` request. */
@@ -67,7 +72,7 @@ export function stubGmService(options: StubGmServiceOptions): GmService {
         const response = await options.call({
           session: request.session,
           turn: request.turn,
-          engineToken: request.engine_token,
+          engineToken: scripted.token ?? request.engine_token,
           callId: `${request.phase}-${index}`,
           tool: scripted.tool,
           input,

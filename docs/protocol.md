@@ -144,7 +144,9 @@ state_hash}`; the full contract is in `docs/gm-service.md`.
 
 `engine_token` names which engine the call acts on: `live` (or absent) is the real one, and a
 preview's token names that preview's clone. A token the server never minted is refused rather than
-falling back to the live engine.
+falling back to the live engine, and **while a preview is running the live engine is closed to
+mutations entirely** — queries stay free. The clone is the isolation; the seal is the assertion
+that it held even if the service echoed the wrong token.
 
 ## The room
 

@@ -153,6 +153,9 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
 
   const preview = async (socket: RoomSocket, message: PreviewRequestMessage): Promise<void> => {
     const clone = registry.clone();
+    // Nothing may mutate the real world while a preview is in flight, whatever engine token a tool
+    // call claims. The clone is the isolation; this is the assertion that it held.
+    registry.seal('That was a preview: nothing is committed until the player presses GO.');
     try {
       const diffs: Diff[] = [];
       if (message.intent) {
@@ -202,6 +205,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       // The clone dies with the preview. Nothing can act on it afterwards, so a late tool call
       // from a timed-out GM is refused rather than landing on a world nobody is looking at.
       registry.release(clone.token);
+      registry.seal(null);
     }
   };
 

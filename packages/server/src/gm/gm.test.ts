@@ -187,6 +187,34 @@ describe('preview does not mutate', () => {
     expect(h.engine.snapshot().world.flags['gatehouse.gate.sealed']).toBe(true);
   });
 
+  it('refuses a mutation aimed at the live engine while a preview is running', async () => {
+    // A game master that ignores the engine token it was handed and writes to the real world.
+    const h = harness((request) =>
+      request.phase === 'preview'
+        ? {
+            calls: [
+              {
+                tool: 'set_flag',
+                input: { key: 'gatehouse.gate.sealed', value: false },
+                token: LIVE_ENGINE_TOKEN,
+              },
+            ],
+          }
+        : {},
+    );
+    const before = h.engine.hash();
+
+    await h.preview(MOVE_NORTH);
+
+    expect(h.engine.hash()).toBe(before);
+    expect(h.engine.snapshot().world.flags['gatehouse.gate.sealed']).toBe(true);
+    const preview = last(of(h.socket.received, 'preview')) as PreviewMessage;
+    // The player's move resolved on the clone; the smuggled write did not resolve at all.
+    expect(preview.diffs.map((d) => d.type)).toEqual(['EntityMoved']);
+    // …and the seal is lifted again once the preview is over.
+    expect(h.registry.sealed()).toBeNull();
+  });
+
   it('refuses an illegal intent from the clone, and the real engine never sees it', async () => {
     const h = harness(BUSY_GM);
     const before = h.engine.hash();
