@@ -72,6 +72,8 @@ export interface GameScene {
   pick(ndc: Vector2): Pick;
   /** Screen position (CSS pixels) of an entity's head, for the floating damage number. */
   projectEntity(id: EntityId, width: number, height: number): { x: number; y: number } | null;
+  /** Screen position (CSS pixels) of the centre of a tile's top face. */
+  projectTile(tile: Tile, width: number, height: number): { x: number; y: number } | null;
   resize(width: number, height: number): void;
 }
 
@@ -267,6 +269,17 @@ export function createGameScene(): GameScene {
     return { x: ((point.x + 1) / 2) * width, y: ((1 - point.y) / 2) * height };
   };
 
+  const projectTile = (
+    tile: Tile,
+    width: number,
+    height: number,
+  ): { x: number; y: number } | null => {
+    if (!map) return null;
+    const world = tileToWorld(map, tile.x, tile.y);
+    const point = new Vector3(world.x, visualTopY(map, tile) + 0.02, world.z).project(camera);
+    return { x: ((point.x + 1) / 2) * width, y: ((1 - point.y) / 2) * height };
+  };
+
   let viewportWidth = 1;
   let viewportHeight = 1;
 
@@ -308,6 +321,7 @@ export function createGameScene(): GameScene {
     setSelected,
     pick,
     projectEntity,
+    projectTile,
     resize,
   };
 }

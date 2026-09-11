@@ -8,7 +8,8 @@ Every message carries `room` (the MVP has one room, `"main"`, the `DEFAULT_ROOM`
 multiplayer does not change the shapes. Text frames only; binary frames are decoded as UTF-8 and
 must still be JSON.
 
-`GET /healthz` answers `{ ok, engine, protocol, room, turn }` and needs no socket.
+`GET /healthz` answers `{ ok, engine, protocol, room, turn, recording }` and needs no socket.
+`recording` is the JSONL file this session is being written to, or `null` when recording is off.
 
 ## The turn number
 
@@ -124,6 +125,11 @@ interface TurnCommit {
 
 The field names line up with `RecordedTurn`, so ALE-30's Recorder can append a line without the
 room knowing anything about files. Listeners must not throw; the room does not catch.
+
+`buildApp({ recordings: '<dir>' })` is what wires it up (ALE-13): one JSONL file per run of the
+server, closed with the app. The default is `null` — no recording — so unit tests and CI write
+nothing; `packages/server/src/index.ts` passes `recordings` (override with `RECORDINGS_DIR`, or
+set it empty to turn recording off).
 
 ## Answers to the questions this page used to ask
 

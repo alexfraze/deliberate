@@ -71,7 +71,9 @@ advantage/disadvantage, initiative).
   `Dialogue`, `Portrait`.
 - **World:** flags, quests with steps, clock, loaded maps.
 - **Diffs:** `EntityMoved`, `DamageApplied`, `ConditionSet`, `DialogueLine`, `FlagSet`,
-  `EntitySpawned`.
+  `EntitySpawned`, `TurnAdvanced`, `EconomySpent`, `FacingChanged`. The last three were added in
+  M0 (ALE-13): combat mutates turn order, the turn economy, the world clock and an attacker's
+  facing, and without them `apply(snapshot, diffs)` did not reproduce the engine's state.
 - **State hash:** Blake2 over the canonical store excluding cosmetic fields; keys the preview and
   NPC-brain caches.
 - **Recording:** one JSONL line per turn (state hash, intent, tool calls + verdicts, diffs, tokens,

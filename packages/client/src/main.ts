@@ -38,6 +38,7 @@ const floats = new Map<Animation, FloatingNumber>();
 let view: ViewState = emptyView();
 let selected: EntityId | null = null;
 let turn = 0;
+let hash = '';
 
 const { renderer, backend } = await createRenderer();
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
@@ -72,23 +73,42 @@ function setSelected(id: EntityId | null): void {
   hud.setSelection(describeSelection(id));
 }
 
+/**
+ * Whose turn it is, from the diff stream alone. `TurnAdvanced` and `EconomySpent` are what put
+ * this line on screen, so it is the visible proof that the client is driven by diffs and not by a
+ * snapshot resent every turn.
+ */
+function describeTurn(): string | null {
+  const init = view.initiative;
+  if (!init) return null;
+  const id = init.order[init.current];
+  const name = id ? (view.entities[id]?.name ?? id) : 'nobody';
+  const spent = init.turn ?? { movedFt: 0, actionUsed: false, bonusActionUsed: false };
+  const action = spent.actionUsed ? 'action spent' : 'action ready';
+  const bonus = spent.bonusActionUsed ? 'bonus spent' : 'bonus ready';
+  return `${name} · round ${init.round} · moved ${spent.movedFt} ft · ${action} · ${bonus}`;
+}
+
 // --- server messages -------------------------------------------------------------------------
 
 function onMessage(message: ServerMessage): void {
   switch (message.type) {
     case 'snapshot': {
       turn = message.turn;
+      hash = message.hash;
       queue.clear();
       view = viewFromSnapshot(message.snapshot);
       if (view.map) scene.setMap(view.map);
       scene.syncEntities(view);
       resize();
       setSelected(selected !== null && view.entities[selected] ? selected : null);
+      hud.setTurn(describeTurn());
       hud.setHint(`joined · ${Object.keys(view.entities).length} entities on ${view.mapId}`);
       return;
     }
     case 'diffs': {
       turn = message.turn;
+      hash = message.hash;
       queue.enqueue(message.diffs);
       hud.setError(null);
       return;
@@ -141,6 +161,7 @@ function onAnimationEvent(event: QueueEvent): void {
   if (event.type === 'finish') {
     applyDiffToView(view, animation.diff);
     scene.syncEntities(view);
+    hud.setTurn(describeTurn());
     if (selected !== null) hud.setSelection(describeSelection(selected));
   }
 }
@@ -209,3 +230,29 @@ renderer.domElement.addEventListener(
 );
 
 window.addEventListener('beforeunload', () => transport.close());
+
+// --- acceptance hook -------------------------------------------------------------------------
+
+/**
+ * What the ALE-13 acceptance suite needs to drive this page with real pointer events: where a tile
+ * or an entity lands on screen under the isometric camera, whether the animation queue has drained,
+ * and the last state hash the server sent (which the replayed recording must match).
+ *
+ * Read-only on purpose. It cannot send an intent or touch state; the suite clicks the canvas like
+ * a player does, so what it exercises is the real input path.
+ */
+export interface AcceptanceHook {
+  screenOfEntity(id: EntityId): { x: number; y: number } | null;
+  screenOfTile(tile: Tile): { x: number; y: number } | null;
+  /** Animations still to play. Zero means the view has caught up with every diff received. */
+  pending(): number;
+  /** The hash the server reported with the last snapshot or diffs frame. */
+  hash(): string;
+}
+
+(window as unknown as { deliberate: AcceptanceHook }).deliberate = {
+  screenOfEntity: (id) => scene.projectEntity(id, viewport().width, viewport().height),
+  screenOfTile: (tile) => scene.projectTile(tile, viewport().width, viewport().height),
+  pending: () => queue.pending,
+  hash: () => hash,
+};
