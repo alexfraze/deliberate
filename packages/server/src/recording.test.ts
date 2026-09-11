@@ -41,14 +41,14 @@ describe('session recording', () => {
   });
 
   it('records nothing unless a directory is asked for', async () => {
-    const app = await buildApp();
+    const app = await buildApp({ scene: 'fixture' });
     expect(app.recording).toBeNull();
     await app.close();
   });
 
   it('records a played session to JSONL that replays to identical hashes', async () => {
     dir = mkdtempSync(join(tmpdir(), 'deliberate-rec-'));
-    const app = await buildApp({ recordings: dir });
+    const app = await buildApp({ scene: 'fixture', recordings: dir });
     const socket = sink();
     const play = (message: ClientMessage): void => app.room.handle(socket, message);
 

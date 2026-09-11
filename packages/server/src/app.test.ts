@@ -23,7 +23,7 @@ let app: Awaited<ReturnType<typeof buildApp>>;
 let baseUrl: string;
 
 beforeEach(async () => {
-  app = await buildApp();
+  app = await buildApp({ scene: 'fixture' });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const address = app.server.address();
   if (!address || typeof address === 'string') throw new Error('no address');

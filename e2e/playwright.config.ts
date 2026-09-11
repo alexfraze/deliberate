@@ -26,7 +26,14 @@ export default defineConfig({
     {
       command: 'pnpm --filter @deliberate/server start',
       cwd: REPO_ROOT,
-      env: { PORT: String(SERVER_PORT), HOST: '127.0.0.1', RECORDINGS_DIR },
+      // The M0 training yard, not the M1 gatehouse: this suite plays it by UI alone and replays
+      // the recording hash-for-hash, and its refusals and damage rolls are fixed by FIXTURE_SEED.
+      env: {
+        PORT: String(SERVER_PORT),
+        HOST: '127.0.0.1',
+        RECORDINGS_DIR,
+        DELIBERATE_SCENE: 'fixture',
+      },
       url: `${SERVER_URL}/healthz`,
       // Always a fresh engine and a fresh recording: the suite asserts on both.
       reuseExistingServer: false,

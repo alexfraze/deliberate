@@ -52,7 +52,12 @@ export function recordSession(room: Room, options: RecordingOptions): Recording 
     sink: fileSink(path),
   });
   const off = room.onTurn((commit) => {
-    recorder.record(commit.intent, commit.verdict, commit.hashBefore);
+    // One line per mutation the engine actually saw, the GM's included, in the order it saw them.
+    // That is what keeps `pnpm replay` exact once a model is in the loop: replay re-applies
+    // intents, and a GM tool call is an intent (ALE-31), so nothing in a turn is unaccounted for.
+    recorder.record(commit.intent, commit.verdict, commit.hashBefore, {
+      toolCalls: commit.toolCalls,
+    });
   });
 
   let closed = false;

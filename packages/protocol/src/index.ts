@@ -482,7 +482,34 @@ export interface IntentMessage {
   intent: Intent;
 }
 
-export type ClientMessage = JoinMessage | IntentMessage;
+/**
+ * Ask for a speculative turn (ALE-32). The server clones the engine, lets the GM act on the
+ * clone, and replies with a `preview`. **Nothing is committed**: the real engine is byte-identical
+ * before and after. Send it again to change your mind; the last preview is the one `go` commits.
+ */
+export interface PreviewRequestMessage {
+  type: 'preview_request';
+  room: RoomId;
+  /** The turn the preview was composed against; a stale one is refused like a stale intent. */
+  turn: number;
+  /** The intent the UI composed, or `null` to ask only what the world does. */
+  intent: Intent | null;
+  /** Free player text. It reaches the GM as quoted data, never as instruction (ALE-33). */
+  text?: string;
+}
+
+/**
+ * Commit the last preview (ALE-32). The server re-validates the player's intent and every
+ * previewed GM call against the REAL engine before applying them — the preview ran on a clone and
+ * its verdicts are not evidence — then resolves initiative and narrates.
+ */
+export interface GoMessage {
+  type: 'go';
+  room: RoomId;
+  turn: number;
+}
+
+export type ClientMessage = JoinMessage | IntentMessage | PreviewRequestMessage | GoMessage;
 
 /** Reply to `join`: the authoritative state and its hash. */
 export interface SnapshotMessage {

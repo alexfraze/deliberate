@@ -11,6 +11,13 @@ export type FrameResult = { ok: true; message: ClientMessage } | { ok: false; re
 /** Longest id or ability key accepted off the wire; keeps a hostile client from sending novels. */
 const MAX_ID_LENGTH = 128;
 
+/**
+ * Longest free player text accepted off the wire. It reaches the game master as quoted data rather
+ * than instruction (ALE-33), but a bound still belongs here: the prompt has a token budget, and a
+ * client that can send a novel can spend someone's money.
+ */
+const MAX_TEXT_LENGTH = 2_000;
+
 function bad(reason: string): FrameResult {
   return { ok: false, reason };
 }
@@ -85,6 +92,39 @@ export function parseClientFrame(text: string): FrameResult {
         return bad('That is not an action this server understands (move, attack, end_turn).');
       }
       return { ok: true, message: { type: 'intent', room, turn: turn as number, intent } };
+    }
+    // ALE-32. `preview_request` stages an action speculatively and `go` commits the last preview;
+    // both carry the turn they were composed against, for the same reason an intent does.
+    case 'preview_request': {
+      const turn = value['turn'];
+      if (!Number.isInteger(turn) || (turn as number) < 0) {
+        return bad('A preview must carry the turn number it was composed against.');
+      }
+      const intent = value['intent'] ?? null;
+      if (intent !== null && !isIntent(intent)) {
+        return bad('That is not an action this server understands (move, attack, end_turn).');
+      }
+      const text = value['text'];
+      if (text !== undefined && (typeof text !== 'string' || text.length > MAX_TEXT_LENGTH)) {
+        return bad(`Say something shorter than ${MAX_TEXT_LENGTH} characters.`);
+      }
+      return {
+        ok: true,
+        message: {
+          type: 'preview_request',
+          room,
+          turn: turn as number,
+          intent,
+          ...(typeof text === 'string' ? { text } : {}),
+        },
+      };
+    }
+    case 'go': {
+      const turn = value['turn'];
+      if (!Number.isInteger(turn) || (turn as number) < 0) {
+        return bad('A GO must carry the turn number it was composed against.');
+      }
+      return { ok: true, message: { type: 'go', room, turn: turn as number } };
     }
     default:
       return bad(`Unknown frame type ${JSON.stringify(value['type']) ?? 'undefined'}.`);

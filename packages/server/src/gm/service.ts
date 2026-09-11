@@ -1,0 +1,126 @@
+import type { Diff, EntityId, Intent } from '@deliberate/protocol';
+
+/**
+ * The Node side of `POST /turn` (docs/gm-service.md): the GM service as this package needs to see
+ * it, plus an HTTP implementation of it.
+ *
+ * The interface exists so the turn loop can be built and tested with no credentials and no Python
+ * (decision 6 of docs/m1-swarm.md). `stub.ts` implements it with a scripted fake; `httpGmService`
+ * implements it against the real service. The loop cannot tell them apart, which is the point:
+ * what ALE-17 adds is a URL, not a code path.
+ *
+ * Memory blocks are **opaque here**. The service owns their shape (ALE-15); Node's whole job is to
+ * hand back what it was given last turn. Typing them structurally would be a second copy of a
+ * contract that lives in Python, and it would drift.
+ */
+
+export type GmPhase = 'preview' | 'resolve' | 'narrate';
+
+/** Whatever `MemoryBlocks` the GM service returned last turn. Node persists it and replays it. */
+export type MemoryBlocks = Record<string, unknown>;
+
+export const EMPTY_MEMORY: MemoryBlocks = {};
+
+export interface GmTurnRequest {
+  session: string;
+  turn: number;
+  phase: GmPhase;
+  /** Which engine `/gm/tool` calls act on. The clone's token during a preview (decision 5). */
+  engine_token: string | null;
+  /** A read-only state summary. Not authoritative: the engine answers `get_state` for the truth. */
+  state: Record<string, unknown>;
+  /** Entity ids the world-model memory block may reference; ALE-15 drops notes about anyone else. */
+  entities: EntityId[];
+  /** The intent the UI composed. The engine still validates it. */
+  player_intent: Intent | null;
+  /** Free player text. Quoted data in the prompt, never instruction (ALE-33). */
+  player_text: string | null;
+  memory: MemoryBlocks;
+  max_tool_steps?: number;
+}
+
+/** One entry of the GM's trace. Field names are the service's (`docs/gm-service.md`). */
+export interface GmToolCallRecord {
+  call_id?: string | null;
+  tool: string;
+  input: Record<string, unknown>;
+  ok: boolean;
+  kind?: 'query' | 'mutation';
+  reason?: string | null;
+  diff?: Diff[];
+  result?: unknown;
+  /** False marks a call the batch-stop discipline skipped after an earlier rejection. */
+  executed?: boolean;
+  latency_ms?: number;
+}
+
+export interface GmTurnResponse {
+  narration: string;
+  trace: GmToolCallRecord[];
+  stop_reason: string;
+  memory: MemoryBlocks;
+  usage?: Record<string, number>;
+  prompt_tokens_estimate?: number;
+}
+
+export interface GmTurnOptions {
+  /** Called as narration arrives, so the client sees prose before the turn is finished. */
+  onChunk?: (chunk: string) => void;
+  signal?: AbortSignal;
+}
+
+export interface GmService {
+  turn(request: GmTurnRequest, options?: GmTurnOptions): Promise<GmTurnResponse>;
+}
+
+export interface HttpGmServiceOptions {
+  /** Base URL of the Python service, e.g. `http://127.0.0.1:8788`. */
+  baseUrl: string;
+  /**
+   * Hard ceiling on one `/turn` call. A turn loop that never returns would hang the room, so every
+   * request carries a timeout; the blueprint's phase budgets are what the caller passes in.
+   */
+  timeoutMs?: number;
+  fetch?: typeof globalThis.fetch;
+}
+
+export const DEFAULT_GM_TIMEOUT_MS = 20_000;
+
+/**
+ * The real client. Non-streaming: the service streams from the model, but this hop returns once,
+ * and `onChunk` is called with the finished narration. Server-sent events over this hop are the
+ * obvious next step and are deliberately not in M1 — the interface already has the seam for it.
+ */
+export function httpGmService(options: HttpGmServiceOptions): GmService {
+  const doFetch = options.fetch ?? globalThis.fetch;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_GM_TIMEOUT_MS;
+  const url = `${options.baseUrl.replace(/\/$/, '')}/turn`;
+
+  return {
+    async turn(request, callOptions) {
+      const timeout = AbortSignal.timeout(timeoutMs);
+      const signal = callOptions?.signal ? AbortSignal.any([timeout, callOptions.signal]) : timeout;
+      const response = await doFetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(request),
+        signal,
+      });
+      if (!response.ok) {
+        throw new GmServiceError(`the game master answered ${response.status}`, response.status);
+      }
+      const body = (await response.json()) as GmTurnResponse;
+      if (body.narration) callOptions?.onChunk?.(body.narration);
+      return body;
+    },
+  };
+}
+
+export class GmServiceError extends Error {
+  override readonly name = 'GmServiceError';
+  readonly status: number | null;
+  constructor(message: string, status: number | null = null) {
+    super(message);
+    this.status = status;
+  }
+}
