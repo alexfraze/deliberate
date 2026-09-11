@@ -27,7 +27,6 @@ PYTHON_TOOL: dict[str, Any] = {
         "`result` to return a value; stdout is captured. Imports are restricted, there is no "
         "filesystem or network, and the snippet is killed if it runs too long."
     ),
-    "strict": True,
     "input_schema": {
         "type": "object",
         "properties": {

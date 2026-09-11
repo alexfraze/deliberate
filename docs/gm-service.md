@@ -101,8 +101,19 @@ for the clone, and the real engine is untouched until GO (ALE-32 / decision 5).
 
 The GM's tools are loaded at runtime from `contracts/gm-tools.json` (decision 2 — one copy,
 both languages). This service never defines a schema, so the two languages cannot drift; it
-does force `strict: true`, `additionalProperties: false` and `required` on every tool, which
-is what makes tool arguments schema-valid.
+does force `additionalProperties: false` and a full `required` on every tool, so a schema
+that forgets one still says what it accepts.
+
+**No `strict: true`.** It was in the design as belt-and-braces, and a live call with the real
+15-tool contract showed it does not survive contact with this tool set. It fails two
+independent ways: strict mode rejects JSON Schema keywords the contract legitimately uses
+(`minimum` ×16, `minLength`/`maxLength` ×4 each, `maximum` ×3) with
+`For 'integer' type, property 'minimum' is not supported`; and with every one of those
+stripped, the same 15 tools return `Schema is too complex.` Stripping them is not a
+workaround — it loses real constraints and still 400s. The identical payload without `strict`
+returns 200. Nothing is lost that the engine was not already doing: it is the authority,
+every mutation goes through `packages/engine/src/gm/validate.ts`, and a malformed call comes
+back as a rejected call with a player-readable reason.
 
 Each entry carries a `kind` of `"query"` or `"mutation"`, and `load_contract` keeps it. An
 entry without one is refused loudly rather than guessed at: the contract file is the only
@@ -217,7 +228,8 @@ Fixed by decision 7, and easy to get wrong from memory:
 - thinking is `{"type": "adaptive"}` — `budget_tokens` is removed on this model and returns a 400;
 - depth is `output_config={"effort": "high"}` — `effort` lives inside `output_config`;
 - requests stream, and `max_tokens` is the streaming ceiling;
-- no assistant prefill — it returns a 400.
+- no assistant prefill — it returns a 400;
+- no `strict: true` on tools — see "Tools" above.
 
 ## Running it
 
@@ -245,12 +257,24 @@ and **every test runs against it**. `StubEngine` plays the Node side, and reject
 it was not scripted to accept — a stub that said yes to everything would let a test pass that
 the real engine would fail.
 
-Live calls happen only when `ANTHROPIC_API_KEY` is set. ALE-17 is the one issue that needs it.
+`tests/test_llm.py` pins what can be pinned without a key: the exact request `AnthropicLLM`
+builds (adaptive thinking, `effort` inside `output_config`, no `budget_tokens`, no
+date-suffixed model id, no assistant prefill, streaming with the larger ceiling), the mapping
+from each typed SDK exception to one turn-level failure, and a check that every parameter name
+we send still exists on the installed SDK.
 
-What a live call cannot be tested for without a key, `tests/test_llm.py` pins anyway: the
-exact request `AnthropicLLM` builds (adaptive thinking, `effort` inside `output_config`, no
-`budget_tokens`, no date-suffixed model id, no assistant prefill, streaming with the larger
-ceiling), the mapping from each typed SDK exception to one turn-level failure, and a check
-that every parameter name we send still exists on the installed SDK. Each of those is a 400 or
-404 that would otherwise surface on ALE-17's first real call. The one live smoke test in that
-file is skipped until the key exists.
+### And the one thing a fake cannot tell you
+
+A fake cannot refuse a request the real endpoint would. `strict: true` was well-formed, passed
+every test here, and was a 400 on the first real call. So `tests/test_live.py` sends the real
+thing: all 15 contract tools in one request, asserting a 200 and a usable `tool_use`, plus a
+second call checking the model settings. It is marked `live`, excluded from the default run by
+`addopts` in `pyproject.toml`, and skipped anyway without a key — so CI, which has none, never
+tries, and nobody bills a turn by typing `pytest`.
+
+```sh
+source ~/.deliberate-env && uv run pytest -m live   # spends money; run it on purpose
+```
+
+Run it before merging any change to the tool payload or the model settings, and run it first
+on ALE-17. It is the only check that the request is _accepted_ rather than merely well-formed.

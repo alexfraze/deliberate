@@ -129,9 +129,23 @@ def load_tools(path: Path) -> list[dict[str, Any]]:
 def normalize_tool(entry: dict[str, Any], *, source: Path | str = "<memory>") -> dict[str, Any]:
     """Turn one contract entry into an Anthropic tool definition.
 
-    `strict` is a top-level field on the tool (not on `tool_choice`), and strict mode
-    requires `additionalProperties: false` plus `required`. We set all three rather than
-    trusting the file, so a schema that forgets one still gets validated arguments.
+    **No `strict: true`.** It was in the original design as belt-and-braces, and a live call
+    with the real 15-tool contract showed it does not survive contact with this tool set. It
+    fails two independent ways: strict mode rejects JSON Schema keywords the contract
+    legitimately uses (`minimum` x16, `minLength`/`maxLength` x4 each, `maximum` x3) with
+    `For 'integer' type, property 'minimum' is not supported`, and with every one of those
+    stripped the same 15 tools return `Schema is too complex.` Stripping the keywords is
+    therefore not a workaround: it loses real constraints and still 400s. Without `strict`
+    the identical payload returns 200.
+
+    Nothing is lost that the engine was not already doing. The engine is the authority, and
+    every mutation goes through `packages/engine/src/gm/validate.ts` before it touches state.
+    A malformed tool call comes back as a rejected call with a player-readable reason, which
+    is the designed behaviour rather than a degradation of it.
+
+    `additionalProperties: false` and a full `required` stay on the outgoing schema. They are
+    ordinary JSON Schema, the API accepts them, they document intent, and the engine
+    validator enforces them.
     """
     name = str(entry.get("name", "")).strip()
     if not name:
@@ -151,7 +165,6 @@ def normalize_tool(entry: dict[str, Any], *, source: Path | str = "<memory>") ->
     return {
         "name": name,
         "description": str(entry.get("description", "")).strip(),
-        "strict": True,
         "input_schema": schema,
     }
 

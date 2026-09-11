@@ -10,12 +10,20 @@ from deliberate_gm.contracts import ContractError, load_contract, load_tools, to
 from .conftest import FIXTURE_TOOLS, REAL_CONTRACT
 
 
-def test_loaded_tools_are_strict_and_closed() -> None:
+def test_loaded_schemas_are_closed() -> None:
     for tool in load_tools(FIXTURE_TOOLS):
-        assert tool["strict"] is True, tool["name"]
-        # strict mode requires both of these; we set them rather than trust the file.
+        # Set rather than trusted, so a schema that forgets one still says what it accepts.
         assert tool["input_schema"]["additionalProperties"] is False, tool["name"]
         assert tool["input_schema"]["required"], tool["name"]
+
+
+def test_strict_is_never_sent() -> None:
+    """A live call with the real contract 400s under strict mode, two independent ways:
+    `For 'integer' type, property 'minimum' is not supported`, and -- with every unsupported
+    keyword stripped -- `Schema is too complex.` The engine is the authority anyway; a
+    malformed call comes back as a rejected call with a reason."""
+    for tool in load_tools(FIXTURE_TOOLS):
+        assert "strict" not in tool, tool["name"]
 
 
 def test_tool_order_is_the_file_order() -> None:
@@ -46,7 +54,7 @@ def test_the_real_contract_loads_and_classifies_every_tool() -> None:
     for tool in contract.tools:
         name = str(tool["name"])
         assert contract.kind_of(name) in ("query", "mutation"), name
-        assert set(tool) == {"name", "description", "strict", "input_schema"}, name
+        assert set(tool) == {"name", "description", "input_schema"}, name
         assert tool["description"], name
 
 
@@ -83,7 +91,7 @@ def test_contract_only_fields_never_reach_the_api(tmp_path) -> None:
         )
     )
     contract = load_contract(path)
-    assert set(contract.tools[0]) == {"name", "description", "strict", "input_schema"}
+    assert set(contract.tools[0]) == {"name", "description", "input_schema"}
     assert contract.kind_of("attack") == "mutation"
 
 

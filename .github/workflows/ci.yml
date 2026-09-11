@@ -47,7 +47,9 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy
-      # No ANTHROPIC_API_KEY here. Every test runs against the scripted fake.
+      # No ANTHROPIC_API_KEY here, so this runs against the scripted fake. The `live` tests
+      # that send a real request are excluded by `addopts` in pyproject.toml; run them by
+      # hand (`uv run pytest -m live`) before changing the tool payload or model settings.
       - run: uv run pytest -q
 
   # The M0 acceptance run: a real browser against the real client, server and engine, then a

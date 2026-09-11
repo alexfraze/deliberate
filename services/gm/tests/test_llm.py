@@ -19,13 +19,13 @@ import httpx2
 import pytest
 from anthropic.resources.messages import Messages
 
-from deliberate_gm.config import DEFAULT_MODEL, Settings, live_api_available
+from deliberate_gm.config import DEFAULT_MODEL, Settings
 from deliberate_gm.llm import AnthropicLLM, LLMRequest, LLMUnavailable
 
 REQUEST = LLMRequest(
     system=[{"type": "text", "text": "s", "cache_control": {"type": "ephemeral"}}],
     messages=[{"role": "user", "content": "hello"}],
-    tools=[{"name": "get_state", "strict": True, "input_schema": {"type": "object"}}],
+    tools=[{"name": "get_state", "input_schema": {"type": "object"}}],
 )
 
 
@@ -174,20 +174,3 @@ def test_every_parameter_we_send_exists_on_the_installed_sdk() -> None:
     assert hasattr(Messages, "stream")
     for name in ("NotFoundError", "RateLimitError", "APIStatusError", "APIConnectionError"):
         assert hasattr(anthropic, name), name
-
-
-@pytest.mark.skipif(not live_api_available(), reason="no ANTHROPIC_API_KEY; ALE-17 needs one")
-def test_a_live_call_works() -> None:
-    """The only test here that spends money, and the only one that proves the settings are
-    right rather than merely well-formed. Skipped everywhere until ALE-17."""
-    llm = AnthropicLLM(Settings())
-    result = llm.create(
-        LLMRequest(
-            system=[{"type": "text", "text": "Answer with one word."}],
-            messages=[{"role": "user", "content": "Say OK."}],
-            tools=[],
-            stream=True,
-        )
-    )
-    assert result.text().strip()
-    assert result.stop_reason in {"end_turn", "max_tokens"}
