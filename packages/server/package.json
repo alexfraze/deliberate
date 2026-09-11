@@ -1,0 +1,25 @@
+{
+  "name": "@deliberate/server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Game server: Fastify + WebSocket turn protocol, single room, in-memory engine, recorder.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@deliberate/engine": "workspace:*",
+    "@deliberate/protocol": "workspace:*",
+    "@fastify/websocket": "^11.3.0",
+    "fastify": "^5.12.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.13",
+    "ws": "^8.21.3"
+  }
+}

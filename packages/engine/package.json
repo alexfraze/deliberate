@@ -1,0 +1,21 @@
+{
+  "name": "@deliberate/engine",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Rules engine: grid, entity store, state hash, SRD 5.1 (trimmed) rules, diff application, session recorder and replay. Pure TypeScript, no I/O, no network, seeded RNG only.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@deliberate/protocol": "workspace:*"
+  }
+}

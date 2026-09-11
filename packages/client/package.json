@@ -1,0 +1,22 @@
+{
+  "name": "@deliberate/client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Browser client: three.js (WebGPU with WebGL fallback), isometric camera, diff-driven animation queue. Never holds authoritative state.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "test": "vitest run",
+    "dev": "vite",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@deliberate/protocol": "workspace:*",
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.4",
+    "vite": "^8.3.0"
+  }
+}
