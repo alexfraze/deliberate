@@ -179,6 +179,7 @@ class GmAgent:
                         tool=name,
                         input=tool_input,
                         ok=False,
+                        kind=self._contract.kind_of(name) or "mutation",
                         reason=BATCH_STOPPED,
                         executed=False,
                     )
@@ -197,6 +198,7 @@ class GmAgent:
                         tool=name,
                         input=tool_input,
                         ok=False,
+                        kind=self._contract.kind_of(name) or "mutation",
                         reason=LEAK_REFUSED,
                         executed=False,
                     )
