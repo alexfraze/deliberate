@@ -1,0 +1,93 @@
+{
+  "sessions": [
+    {
+      "name": "m1-acceptance",
+      "file": "m1-acceptance.jsonl",
+      "source": "live",
+      "description": "The M1 acceptance run (ALE-17): ten player turns against the live model, 56 mutations, the game master talking the yard down instead of swinging. The only entry a model actually wrote, and the reason the bank is worth having — a rules, hash or diff change that a unit test would not notice fails against a real session here, for free, forever.",
+      "objective": {
+        "type": "QuestAdvanced",
+        "where": {
+          "quest": "carry-the-scout"
+        }
+      },
+      "expect": {
+        "turns": 56,
+        "rejected": 1,
+        "finalHash": "ac96bc8acbaa65ec24e25278eeb9ecafafbc6beb66993a06c4854e5f7156c51401fba8fab1a79e9f0c9c3c1636d470324840ac76ae87892685ea0187e2927ac8",
+        "objectiveTurn": 27
+      }
+    },
+    {
+      "name": "m0-yard-skirmish",
+      "file": "m0-yard-skirmish.jsonl",
+      "source": "engine",
+      "description": "The M0 yard: the player closes on a training dummy and beats it to death, ending turns between swings so initiative wraps the round. Covers damage, the dead condition, the world clock, and a refusal to attack a corpse — none of which the live session contains.",
+      "objective": {
+        "type": "ConditionSet",
+        "where": {
+          "condition": "dead",
+          "active": true
+        }
+      },
+      "expect": {
+        "turns": 6,
+        "rejected": 1,
+        "finalHash": "72e141430a8bfd006c4148fbb15a0e996a28c42222ca5b3056334b8085f6b25ddf9dd734c64c5d1482f79a623bb8565db2fe11918bf0f22d657035cc3a8c354c",
+        "objectiveTurn": 4
+      }
+    },
+    {
+      "name": "gatehouse-refusals",
+      "file": "gatehouse-refusals.jsonl",
+      "source": "engine",
+      "description": "One refusal for every mutation the engine knows, and nothing else. The final hash is the hash it started with, which is the engine contract stated as a whole session: a rejected intent touches nothing. A rule that starts quietly accepting one of these fails here.",
+      "objective": {
+        "type": "FlagSet"
+      },
+      "expect": {
+        "turns": 9,
+        "rejected": 9,
+        "finalHash": "177c6812bfbf5359061539a096babb9dd82a7950a5b7e47b5645e09f52533197c7423dd8df6ba4e06d46d5d2387dab1f46f7ede07349f347d5c6ac90aee6efbc",
+        "objectiveTurn": null
+      }
+    },
+    {
+      "name": "gatehouse-initiative",
+      "file": "gatehouse-initiative.jsonl",
+      "source": "engine",
+      "description": "A four-combatant encounter driven to the top of round three: every NPC in the gatehouse takes a turn, initiative wraps twice and the world clock follows it. The live session never got past the round it started, so nothing else in the bank covers the wrap.",
+      "objective": {
+        "type": "TurnAdvanced",
+        "where": {
+          "initiative.round": 3
+        }
+      },
+      "expect": {
+        "turns": 9,
+        "rejected": 0,
+        "finalHash": "5502a096d53ea08415f7b4142da19181b5ce81ba2210c6770c4cdc35601a96ceb8cb3b6c055e195907fb0112797348ea3dc6377640be8b28ddec5a2a8f494d36",
+        "objectiveTurn": 9
+      }
+    },
+    {
+      "name": "gatehouse-gm-tools",
+      "file": "gatehouse-gm-tools.jsonl",
+      "source": "engine",
+      "description": "All nine mutation tools through the same `executeGmTool` door the game master uses, with the three NPC templates loaded so `spawn` succeeds. This is the entry that holds the tool contract still: a renamed argument or a changed mapping fails it, which replay alone cannot see. It also proves the header carries the templates — without them the spawn, and every hash after it, does not replay.",
+      "objective": {
+        "type": "QuestAdvanced",
+        "where": {
+          "quest": "carry-the-scout",
+          "step": 1
+        }
+      },
+      "expect": {
+        "turns": 12,
+        "rejected": 4,
+        "finalHash": "976e476a90f468fc2ec8efb76eb8d62e28b030a663c75f1ec9187c382eeec3d8467cba4426e0cf59db918a62204ec2466a0ce84966eb1be1f11a12445a4f291b",
+        "objectiveTurn": 4
+      }
+    }
+  ]
+}

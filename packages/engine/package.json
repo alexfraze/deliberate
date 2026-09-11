@@ -18,7 +18,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "replay": "node dist/recorder/cli.js replay",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bank": "node dist/recorder/cli.js bank"
   },
   "dependencies": {
     "@deliberate/protocol": "workspace:*"

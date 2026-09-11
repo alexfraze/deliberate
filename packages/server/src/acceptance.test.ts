@@ -53,14 +53,17 @@ const repoRoot = resolve(here, '../../..');
 /**
  * The committed evidence: the JSONL a real ten-turn playthrough against `claude-opus-5` wrote.
  *
- * It lives beside the test rather than in `recordings/`, which is gitignored — a recording that
- * never reaches CI proves nothing there. Replaying it needs the engine and nothing else: no key,
- * no model, no network. So one expensive live run becomes a permanent free regression artifact,
- * and anyone who later changes the rules, the hash or the diff set gets an immediate failure
- * showing they broke determinism against a real model-driven session. This is the first entry in
- * the bank ALE-21 (M3, replay-based regression suite) will grow.
+ * Replaying it needs the engine and nothing else: no key, no model, no network. So one expensive
+ * live run becomes a permanent free regression artifact, and anyone who later changes the rules,
+ * the hash or the diff set gets an immediate failure showing they broke determinism against a real
+ * model-driven session.
+ *
+ * It lives in `recordings/bank/`, which is committed (only `recordings/*.jsonl` is ignored),
+ * because ALE-21 grew it into the regression bank: it is the first of six entries there and is
+ * replayed with the rest by `pnpm bank` and `src/bank/bank.test.ts`. This suite keeps its own
+ * assertions because they are about the milestone, not about determinism.
  */
-const FIXTURE = join(here, 'fixtures', 'm1-acceptance.jsonl');
+const FIXTURE = resolve(repoRoot, 'recordings/bank/m1-acceptance.jsonl');
 
 // ---------------------------------------------------------------------------------------------
 // The assertions. One function, run against the committed recording and against a fresh one.

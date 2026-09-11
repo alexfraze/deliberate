@@ -1,6 +1,7 @@
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
+import type { BankEntry, BankManifest } from './bank.js';
 import type { LineSink } from './sink.js';
 
 /**
@@ -35,4 +36,19 @@ export function readLines(path: string): string[] {
   return readFileSync(path, 'utf8')
     .split('\n')
     .filter((l) => l.trim() !== '');
+}
+
+/**
+ * Read the regression bank (ALE-21): `<dir>/bank.json` names the sessions and the numbers each one
+ * produced, and every `file` beside it is a recording. Returns what `runBank` consumes, so the CLI
+ * and the test in `packages/server/src/bank/` load the bank exactly the same way.
+ */
+export const BANK_MANIFEST = 'bank.json';
+
+export function loadBank(dir: string): BankEntry[] {
+  const manifest = JSON.parse(readFileSync(join(dir, BANK_MANIFEST), 'utf8')) as BankManifest;
+  return manifest.sessions.map((session) => ({
+    session,
+    lines: readLines(join(dir, session.file)),
+  }));
 }

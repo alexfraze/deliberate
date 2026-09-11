@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import { createRecorder, type Recorder } from '@deliberate/engine';
 import { fileSink } from '@deliberate/engine/fs';
-import type { Seed } from '@deliberate/protocol';
+import type { Entity, Seed } from '@deliberate/protocol';
 
 import type { Room } from './room.js';
 
@@ -33,6 +33,11 @@ export interface RecordingOptions {
    * `buildApp` passes the seed it used, so an injected engine must be given its seed too.
    */
   seed: Seed;
+  /**
+   * The engine's `spawn` templates, recorded in the header so the replay engine is built with the
+   * same table. Without it a session in which the GM spawned does not replay (ALE-21).
+   */
+  templates?: Readonly<Record<string, Entity>>;
   /** The wall clock. Injected because the engine has none and so tests can name the file. */
   now?: () => Date;
 }
@@ -50,6 +55,7 @@ export function recordSession(room: Room, options: RecordingOptions): Recording 
     seed: options.seed,
     startedAt: startedAt.toISOString(),
     sink: fileSink(path),
+    ...(options.templates ? { templates: options.templates } : {}),
   });
   const off = room.onTurn((commit) => {
     // One line per mutation the engine actually saw, the GM's included, in the order it saw them.

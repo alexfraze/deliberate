@@ -25,7 +25,8 @@ decision and GO, over an engine that owns the rules. Design in `docs/blueprint.m
 | `packages/engine/src/grid,store,hash` | ALE-8  | Grid math, entity store, Blake2 state hash, `createEngine` |
 | `packages/engine/src/rules`           | ALE-9  | SRD 5.1 trimmed rules, action economy, initiative          |
 | `packages/engine/src/diffs`           | ALE-10 | Diff emission, `apply(snapshot, diffs)`                    |
-| `packages/engine/src/recorder`        | ALE-30 | JSONL recorder, `replay`                                   |
+| `packages/engine/src/recorder`        | ALE-30 | JSONL recorder, `replay`, the regression bank runner       |
+| `recordings/bank/`                    | ALE-21 | The replay regression bank; `docs/regression-bank.md`      |
 | `packages/engine/src/engine.ts`       | seam   | `Engine` interface consumed by server and recorder         |
 | `packages/server/`                    | ALE-11 | Fastify + WebSocket, single room, drives an `Engine`       |
 | `packages/client/`                    | ALE-12 | three.js renderer, diff-driven animation queue             |
@@ -46,6 +47,7 @@ pnpm dev:server             # http://127.0.0.1:8787, GET /healthz, WS /ws
 pnpm dev:client             # http://127.0.0.1:5173, proxies /ws to the server
 pnpm e2e                    # Playwright acceptance run (needs a browser; not part of `check`)
 pnpm replay <file.jsonl>    # Re-run a recorded session and check every state hash
+pnpm bank                   # Replay the whole regression bank (docs/regression-bank.md)
 ```
 
 Node 22, pnpm 10, ESM everywhere, strict TypeScript. Playwright with Chromium is available in

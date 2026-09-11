@@ -1,14 +1,20 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { PROTOCOL_VERSION, type Intent, type RecordedTurn } from '@deliberate/protocol';
+import {
+  PROTOCOL_VERSION,
+  type Intent,
+  type RecordedTurn,
+  type RecordingHeader,
+} from '@deliberate/protocol';
 import fc from 'fast-check';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import type { CreateEngine, Engine } from '../engine.js';
 import { createEngine } from '../rules/index.js';
-import { fixtureSnapshot, FIXTURE_PLAYER_ID, FIXTURE_SEED } from '../store/index.js';
+import { fixtureDummy, fixtureSnapshot, FIXTURE_PLAYER_ID, FIXTURE_SEED } from '../store/index.js';
+import { bankExpectation, type BankManifest } from './bank.js';
 import { main, type CliOut } from './cli.js';
 import { fileSink, readLines } from './fs-sink.js';
 import { parseRecording, RecordingError } from './jsonl.js';
@@ -153,6 +159,39 @@ describe('replay', () => {
     );
   });
 
+  it('replays a spawn, because the header carries the engine templates', () => {
+    // A snapshot and a seed are not quite the whole engine: `spawn` reads the template table. The
+    // table was not in the header until ALE-21, so a session in which the game master spawned did
+    // not replay at all — the rejection reason even differs ("no templates are loaded"). The bank
+    // is what found it; this is the same fact at engine scale.
+    const templates = { dummy: fixtureDummy('template', 'Template Dummy', 0, 0) };
+    const sink = memorySink();
+    const engine = createEngine(fixtureSnapshot(), { seed: FIXTURE_SEED, templates });
+    const recorder = createRecorder(engine, {
+      seed: FIXTURE_SEED,
+      startedAt: STARTED_AT,
+      sink,
+      templates,
+    });
+    const spawn: Intent = {
+      kind: 'spawn',
+      template: 'dummy',
+      at: { x: 4, y: 2 },
+      map: null,
+      id: 'dummy-c',
+    };
+    expect(recorder.apply(spawn).ok).toBe(true);
+    expect(recorder.header.templates).toEqual(templates);
+    expect(replay(sink.lines, createEngine).ok).toBe(true);
+
+    // Strip the templates back out of the header and the very same recording stops replaying.
+    const stripped = parseRecording(sink.text());
+    delete (stripped[0] as RecordingHeader).templates;
+    const report = replay(stripped, createEngine);
+    expect(report.ok).toBe(false);
+    expect(report.divergence).toMatchObject({ turn: 1, kind: 'verdict' });
+  });
+
   it('reports the first divergence and stops there', () => {
     const { sink } = recordScript();
     const lines = parseRecording(sink.text());
@@ -209,6 +248,7 @@ describe('replay', () => {
 // ---------------------------------------------------------------------------------------------
 
 const dir = mkdtempSync(join(tmpdir(), 'deliberate-recorder-'));
+const bankDir = mkdtempSync(join(tmpdir(), 'deliberate-bank-'));
 
 /** Captures what the CLI would have printed, instead of spraying it through the test run. */
 function captured(): CliOut & { text: string } {
@@ -219,7 +259,10 @@ function captured(): CliOut & { text: string } {
     },
   };
 }
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(bankDir, { recursive: true, force: true });
+});
 
 describe('fileSink and the replay CLI', () => {
   it('writes a recording a fresh engine replays to identical hashes', () => {
@@ -240,6 +283,45 @@ describe('fileSink and the replay CLI', () => {
     const out = captured();
     expect(main(['replay', path], out, out)).toBe(0);
     expect(out.text).toContain(`${report.turns} turn(s) replayed to ${engine.hash()}`);
+  });
+
+  it('runs a bank of recordings and exits non-zero when one of them moves', () => {
+    // The whole bank lives in `recordings/bank` and is exercised by the server's bank.test.ts,
+    // which can reach the content package. What is checked here is the CLI itself: it finds a
+    // manifest, reports every session, and its exit code is usable from a shell.
+    const dir = join(bankDir, 'bank');
+    const { sink } = recordScript();
+    const objective = { type: 'DamageApplied' } as const;
+    const manifest: BankManifest = {
+      sessions: [
+        {
+          name: 'script',
+          file: 'script.jsonl',
+          source: 'engine',
+          description: 'the five-intent script at the top of this file',
+          objective,
+          expect: bankExpectation(parseRecording(sink.text()), objective),
+        },
+      ],
+    };
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'script.jsonl'), sink.text());
+    writeFileSync(join(dir, 'bank.json'), JSON.stringify(manifest));
+
+    const ok = captured();
+    expect(main(['bank', dir], ok, ok)).toBe(0);
+    expect(ok.text).toContain('ok   script');
+    expect(ok.text).toContain('ok bank: 1/1 sessions');
+
+    // Move one number in the manifest and the bank must go red, saying which.
+    manifest.sessions[0]!.expect.rejected += 1;
+    writeFileSync(join(dir, 'bank.json'), JSON.stringify(manifest));
+    const red = captured();
+    expect(main(['bank', dir], red, red)).toBe(1);
+    expect(red.text).toContain('FAIL script');
+    expect(red.text).toContain('rejected verdicts: 1, the bank says 2');
+
+    expect(main(['bank', join(bankDir, 'nowhere')], captured(), captured())).toBe(2);
   });
 
   it('exits non-zero on divergence and on bad usage', () => {

@@ -55,7 +55,10 @@ export function replay(
 
     if (line.line === 'header') {
       if (engine) throw new RecordingError(`line ${at}: a second header in one recording`);
-      engine = createEngine(line.snapshot, { seed: line.seed });
+      engine = createEngine(line.snapshot, {
+        seed: line.seed,
+        ...(line.templates ? { templates: line.templates } : {}),
+      });
       recordedHash = line.hash;
       const actual = engine.hash();
       if (actual !== line.hash) {
