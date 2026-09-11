@@ -23,29 +23,29 @@ One request per GM turn. The caller supplies everything the turn needs, includin
 blocks, and gets the updated blocks back — the service persists nothing, so a recorded turn
 replays to the same prompt.
 
-| Field           | Type                                 | Notes                                                                              |
-| --------------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
-| `session`       | string                               | Room / session id. Echoed on every `/gm/tool` call.                                |
-| `turn`          | integer                              | The turn this request belongs to.                                                  |
-| `phase`         | `preview` \| `resolve` \| `narrate`  | Shapes the task line in the prompt. Default `preview`.                             |
-| `engine_token`  | string \| null                       | **Which engine to act on.** See below.                                             |
-| `state`         | object                               | A read-only state summary the engine already computed. Not authoritative.          |
-| `entities`      | string[]                             | Entity ids the world-model block may reference (ALE-15 checks against this).       |
-| `player_intent` | object \| null                       | The intent the UI composed. The engine still validates it.                         |
-| `player_text`   | string \| null                       | Free player text. Enters the prompt as quoted data (ALE-33), never as instruction. |
-| `memory`        | `MemoryBlocks`                       | The blocks from the previous turn. See "Memory".                                   |
-| `max_tool_steps`| integer \| null                      | Per-request override of the loop's hard stop.                                      |
+| Field            | Type                                | Notes                                                                              |
+| ---------------- | ----------------------------------- | ---------------------------------------------------------------------------------- |
+| `session`        | string                              | Room / session id. Echoed on every `/gm/tool` call.                                |
+| `turn`           | integer                             | The turn this request belongs to.                                                  |
+| `phase`          | `preview` \| `resolve` \| `narrate` | Shapes the task line in the prompt. Default `preview`.                             |
+| `engine_token`   | string \| null                      | **Which engine to act on.** See below.                                             |
+| `state`          | object                              | A read-only state summary the engine already computed. Not authoritative.          |
+| `entities`       | string[]                            | Entity ids the world-model block may reference (ALE-15 checks against this).       |
+| `player_intent`  | object \| null                      | The intent the UI composed. The engine still validates it.                         |
+| `player_text`    | string \| null                      | Free player text. Enters the prompt as quoted data (ALE-33), never as instruction. |
+| `memory`         | `MemoryBlocks`                      | The blocks from the previous turn. See "Memory".                                   |
+| `max_tool_steps` | integer \| null                     | Per-request override of the loop's hard stop.                                      |
 
 Response:
 
-| Field                    | Type              | Notes                                                                 |
-| ------------------------ | ----------------- | --------------------------------------------------------------------- |
-| `narration`              | string            | Prose for the player. Nothing in it is authoritative.                 |
-| `trace`                  | `ToolCallRecord[]`| Every call the GM made, with the engine's verdict. Goes in the recording. |
-| `stop_reason`            | string            | `end_turn`, `max_tool_steps`, or the model's own stop reason.          |
-| `memory`                 | `MemoryBlocks`    | Updated blocks. **Persist these**; they are the next turn's input.     |
-| `usage`                  | object            | Token usage, including `cache_read_input_tokens`.                      |
-| `prompt_tokens_estimate` | integer           | What the assembled prompt cost, against the 12k budget.                |
+| Field                    | Type               | Notes                                                                     |
+| ------------------------ | ------------------ | ------------------------------------------------------------------------- |
+| `narration`              | string             | Prose for the player. Nothing in it is authoritative.                     |
+| `trace`                  | `ToolCallRecord[]` | Every call the GM made, with the engine's verdict. Goes in the recording. |
+| `stop_reason`            | string             | `end_turn`, `max_tool_steps`, or the model's own stop reason.             |
+| `memory`                 | `MemoryBlocks`     | Updated blocks. **Persist these**; they are the next turn's input.        |
+| `usage`                  | object             | Token usage, including `cache_read_input_tokens`.                         |
+| `prompt_tokens_estimate` | integer            | What the assembled prompt cost, against the 12k budget.                   |
 
 `ToolCallRecord` is `{call_id, tool, input, ok, kind, reason, diff, result, executed, latency_ms}`.
 `executed: false` marks a call the batch-stop discipline skipped.
@@ -62,14 +62,14 @@ Request: `{session, turn, engine_token, call_id, tool, input}`.
 
 Response — the blueprint's `{ok, reason, diff}`, plus two fields the GM loop needs:
 
-| Field        | Type                     | Notes                                                                    |
-| ------------ | ------------------------ | ------------------------------------------------------------------------ |
-| `ok`         | boolean                  | The engine's verdict. A rejected call left state untouched.              |
-| `kind`       | `query` \| `mutation`    | **Required in practice.** Queries leave no ledger line; mutations do. Defaults to `mutation`, so an unlabelled call is recorded rather than lost. |
-| `reason`     | string \| null           | Player-readable, per the `Verdict` contract.                             |
-| `diff`       | `Diff[]`                 | Empty on rejection.                                                      |
-| `result`     | any                      | Query payloads.                                                          |
-| `state_hash` | string \| null           | Optional; useful in the recording.                                       |
+| Field        | Type                  | Notes                                                                                                                                             |
+| ------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ok`         | boolean               | The engine's verdict. A rejected call left state untouched.                                                                                       |
+| `kind`       | `query` \| `mutation` | **Required in practice.** Queries leave no ledger line; mutations do. Defaults to `mutation`, so an unlabelled call is recorded rather than lost. |
+| `reason`     | string \| null        | Player-readable, per the `Verdict` contract.                                                                                                      |
+| `diff`       | `Diff[]`              | Empty on rejection.                                                                                                                               |
+| `result`     | any                   | Query payloads.                                                                                                                                   |
+| `state_hash` | string \| null        | Optional; useful in the recording.                                                                                                                |
 
 The GM service never raises on a transport failure: an unreachable or broken engine becomes
 `{ok: false, reason: "engine unreachable: …"}`. The loop must return a `tool_result` for every

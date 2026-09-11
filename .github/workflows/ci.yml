@@ -28,6 +28,28 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  # The Python GM service (services/gm). Its own job on purpose: `check` is the required
+  # job and must never depend on a Python toolchain being available.
+  gm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/gm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # 3.12 comes from services/gm/.python-version, not from the runner image.
+      - run: uv python install
+      - run: uv sync --extra dev --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      # No ANTHROPIC_API_KEY here. Every test runs against the scripted fake.
+      - run: uv run pytest -q
+
   # The M0 acceptance run: a real browser against the real client, server and engine, then a
   # replay of the JSONL it recorded. Kept out of `check` on purpose — `check` is the required
   # job and must not depend on a browser download.
