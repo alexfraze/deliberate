@@ -28,7 +28,10 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "entity_id": { "type": "string", "description": "The entity whose options to enumerate." }
+          "entity_id": {
+            "type": "string",
+            "description": "The entity whose options to enumerate."
+          }
         },
         "required": ["entity_id"],
         "additionalProperties": false
@@ -44,8 +47,16 @@
             "type": "object",
             "description": "Origin tile. Integer grid coordinates; x runs east, y runs south.",
             "properties": {
-              "x": { "type": "integer", "minimum": 0 },
-              "y": { "type": "integer", "minimum": 0 }
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Column; x runs east from 0."
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Row; y runs south from 0."
+              }
             },
             "required": ["x", "y"],
             "additionalProperties": false
@@ -54,8 +65,16 @@
             "type": "object",
             "description": "Destination tile.",
             "properties": {
-              "x": { "type": "integer", "minimum": 0 },
-              "y": { "type": "integer", "minimum": 0 }
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Column; x runs east from 0."
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Row; y runs south from 0."
+              }
             },
             "required": ["x", "y"],
             "additionalProperties": false
@@ -79,8 +98,16 @@
             "type": "object",
             "description": "Start tile.",
             "properties": {
-              "x": { "type": "integer", "minimum": 0 },
-              "y": { "type": "integer", "minimum": 0 }
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Column; x runs east from 0."
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Row; y runs south from 0."
+              }
             },
             "required": ["x", "y"],
             "additionalProperties": false
@@ -89,8 +116,16 @@
             "type": "object",
             "description": "Goal tile.",
             "properties": {
-              "x": { "type": "integer", "minimum": 0 },
-              "y": { "type": "integer", "minimum": 0 }
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Column; x runs east from 0."
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Row; y runs south from 0."
+              }
             },
             "required": ["x", "y"],
             "additionalProperties": false
@@ -148,8 +183,14 @@
                 "enum": ["attack", "cast"],
                 "description": "attack: a weapon attack. cast: a spell attack."
               },
-              "attacker": { "type": "string", "description": "Entity making the attack." },
-              "target": { "type": "string", "description": "Entity being attacked." },
+              "attacker": {
+                "type": "string",
+                "description": "Entity making the attack."
+              },
+              "target": {
+                "type": "string",
+                "description": "Entity being attacked."
+              },
               "ability": {
                 "type": "string",
                 "description": "Weapon key for kind 'attack' (e.g. longsword), spell key for kind 'cast' (e.g. fire_bolt)."
@@ -171,13 +212,24 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "entity_id": { "type": "string", "description": "The entity that walks." },
+          "entity_id": {
+            "type": "string",
+            "description": "The entity that walks."
+          },
           "to": {
             "type": "object",
             "description": "Destination tile.",
             "properties": {
-              "x": { "type": "integer", "minimum": 0 },
-              "y": { "type": "integer", "minimum": 0 }
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Column; x runs east from 0."
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Row; y runs south from 0."
+              }
             },
             "required": ["x", "y"],
             "additionalProperties": false
@@ -193,8 +245,14 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "attacker": { "type": "string", "description": "The attacking entity." },
-          "target": { "type": "string", "description": "The entity being attacked." },
+          "attacker": {
+            "type": "string",
+            "description": "The attacking entity."
+          },
+          "target": {
+            "type": "string",
+            "description": "The entity being attacked."
+          },
           "ability": {
             "type": "string",
             "description": "Weapon key from the trimmed SRD table: unarmed, club, dagger, handaxe, mace, shortsword, longsword, greataxe, shortbow, longbow. The attacker must carry it unless it is natural."
@@ -210,12 +268,18 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "entity_id": { "type": "string", "description": "The caster." },
+          "entity_id": {
+            "type": "string",
+            "description": "The caster."
+          },
           "spell": {
             "type": "string",
             "description": "Spell key from the trimmed cantrip table: fire_bolt, ray_of_frost, eldritch_blast."
           },
-          "target": { "type": "string", "description": "The entity being targeted." }
+          "target": {
+            "type": "string",
+            "description": "The entity being targeted."
+          }
         },
         "required": ["entity_id", "spell", "target"],
         "additionalProperties": false
@@ -227,7 +291,10 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "npc_id": { "type": "string", "description": "The speaker." },
+          "npc_id": {
+            "type": "string",
+            "description": "The speaker."
+          },
           "text": {
             "type": "string",
             "minLength": 1,
@@ -249,8 +316,14 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "npc_id": { "type": "string", "description": "Whose feelings change." },
-          "toward": { "type": "string", "description": "Who they are feeling it about." },
+          "npc_id": {
+            "type": "string",
+            "description": "Whose feelings change."
+          },
+          "toward": {
+            "type": "string",
+            "description": "Who they are feeling it about."
+          },
           "delta": {
             "type": "integer",
             "minimum": -200,
@@ -282,8 +355,16 @@
             "type": "object",
             "description": "Tile to place the creature on. Must be on the map, walkable and empty.",
             "properties": {
-              "x": { "type": "integer", "minimum": 0 },
-              "y": { "type": "integer", "minimum": 0 }
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Column; x runs east from 0."
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Row; y runs south from 0."
+              }
             },
             "required": ["x", "y"],
             "additionalProperties": false
@@ -328,7 +409,10 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "quest_id": { "type": "string", "description": "The quest to advance." },
+          "quest_id": {
+            "type": "string",
+            "description": "The quest to advance."
+          },
           "step": {
             "type": "integer",
             "minimum": 0,
@@ -345,7 +429,10 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "entity_id": { "type": "string", "description": "The entity whose turn ends." }
+          "entity_id": {
+            "type": "string",
+            "description": "The entity whose turn ends."
+          }
         },
         "required": ["entity_id"],
         "additionalProperties": false
