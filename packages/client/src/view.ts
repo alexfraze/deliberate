@@ -9,6 +9,7 @@ import type {
   Diff,
   EntityId,
   FactionId,
+  InitiativeState,
   MapId,
   MapRecord,
   Snapshot,
@@ -29,6 +30,11 @@ export interface ViewState {
   mapId: MapId | null;
   map: MapRecord | null;
   entities: Record<EntityId, ViewEntity>;
+  /**
+   * Turn order, or null out of combat. Kept up to date entirely from the diff stream
+   * (`TurnAdvanced`, `EconomySpent`) — the client never asks the server whose turn it is.
+   */
+  initiative: InitiativeState | null;
 }
 
 export function isAlive(entity: ViewEntity): boolean {
@@ -65,11 +71,11 @@ export function viewFromSnapshot(snapshot: Snapshot): ViewState {
   }
   mapId ??= Object.keys(snapshot.world.maps)[0] ?? null;
   const map = mapId === null ? null : (snapshot.world.maps[mapId] ?? null);
-  return { mapId, map, entities };
+  return { mapId, map, entities, initiative: structuredClone(snapshot.initiative) };
 }
 
 export function emptyView(): ViewState {
-  return { mapId: null, map: null, entities: {} };
+  return { mapId: null, map: null, entities: {}, initiative: null };
 }
 
 /**
@@ -103,9 +109,19 @@ export function applyDiffToView(view: ViewState, diff: Diff): void {
       if (spawned) view.entities[spawned.id] = spawned;
       return;
     }
+    case 'TurnAdvanced': {
+      view.initiative = structuredClone(diff.initiative);
+      return;
+    }
+    case 'EconomySpent': {
+      if (view.initiative) view.initiative.turn = { ...diff.turn };
+      return;
+    }
     case 'DialogueLine':
     case 'FlagSet':
-      // Nothing on screen depends on these yet (narration lands in M1).
+    case 'FacingChanged':
+      // Nothing on screen depends on these yet: narration lands in M1, and the capsules the
+      // renderer draws have no front.
       return;
   }
 }

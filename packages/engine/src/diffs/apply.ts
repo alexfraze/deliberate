@@ -1,4 +1,4 @@
-import type { Diff, Entity, EntityId, Health, Snapshot } from '@deliberate/protocol';
+import type { Diff, Entity, EntityId, Health, Position, Snapshot } from '@deliberate/protocol';
 
 import { directionTo } from '../grid/index.js';
 
@@ -37,6 +37,12 @@ function mustEntity(state: Snapshot, id: EntityId): Entity {
   return entity;
 }
 
+function mustPosition(state: Snapshot, id: EntityId): Position {
+  const position = mustEntity(state, id).components.position;
+  if (!position) throw new DiffError(`entity ${id} has no position component`);
+  return position;
+}
+
 function mustHealth(state: Snapshot, id: EntityId): Health {
   const health = mustEntity(state, id).components.health;
   if (!health) throw new DiffError(`entity ${id} has no health component`);
@@ -47,8 +53,7 @@ function mustHealth(state: Snapshot, id: EntityId): Health {
 function applyInto(state: Snapshot, diff: Diff): void {
   switch (diff.type) {
     case 'EntityMoved': {
-      const position = mustEntity(state, diff.entity).components.position;
-      if (!position) throw new DiffError(`entity ${diff.entity} has no position component`);
+      const position = mustPosition(state, diff.entity);
       const facing = directionTo(diff.path.at(-2) ?? diff.from, diff.to) ?? position.facing;
       position.x = diff.to.x;
       position.y = diff.to.y;
@@ -80,6 +85,19 @@ function applyInto(state: Snapshot, diff: Diff): void {
       return;
     case 'EntitySpawned':
       state.entities[diff.entity.id] = structuredClone(diff.entity);
+      return;
+    case 'TurnAdvanced':
+      state.initiative = diff.initiative === null ? null : structuredClone(diff.initiative);
+      state.world.clock = diff.clock;
+      return;
+    case 'EconomySpent': {
+      const init = state.initiative;
+      if (!init) throw new DiffError(`${diff.entity} spent turn economy with no encounter running`);
+      init.turn = { ...diff.turn };
+      return;
+    }
+    case 'FacingChanged':
+      mustPosition(state, diff.entity).facing = diff.facing;
       return;
     default:
       throw new DiffError(`unknown diff type ${String((diff as Diff).type)}`);

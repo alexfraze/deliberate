@@ -233,7 +233,16 @@ describe('createEngine: encounters', () => {
     expectRejected(engine, move(P, 2, 3), /no movement left this turn/);
 
     // End turn resets the economy for the next player turn (dummies are skipped, round advances).
-    expect(engine.apply(endTurn(P))).toEqual({ ok: true, diff: [] });
+    // The advance is itself a diff (ALE-13), so a diff-driven client can see whose turn it is.
+    const ended = engine.apply(endTurn(P));
+    expect(ended.ok).toBe(true);
+    expect(ended.diff).toEqual([
+      {
+        type: 'TurnAdvanced',
+        initiative: engine.snapshot().initiative,
+        clock: engine.snapshot().world.clock,
+      },
+    ]);
     const init = engine.snapshot().initiative!;
     expect(init.round).toBe(2);
     expect(init.order[init.current]).toBe(P);
@@ -253,7 +262,10 @@ describe('createEngine: encounters', () => {
     const engine = boot(s);
     expectRejected(engine, endTurn(P), /dead and cannot end their turn/);
     const v = engine.apply(endTurn(B));
-    expect(v).toEqual({ ok: true, diff: [] });
+    expect(v).toEqual({
+      ok: true,
+      diff: [{ type: 'TurnAdvanced', initiative: null, clock: 1 }],
+    });
     expect(engine.snapshot().initiative).toBeNull();
     expect(engine.snapshot().world.clock).toBe(1);
     // Back in exploration: the survivor moves freely.

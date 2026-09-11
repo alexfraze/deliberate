@@ -2,7 +2,7 @@ import type { Diff, Entity } from '@deliberate/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { fixtureSnapshot } from './fixtures/index.js';
-import { applyDiffsToView, emptyView, isAlive, viewFromSnapshot } from './view.js';
+import { applyDiffToView, applyDiffsToView, emptyView, isAlive, viewFromSnapshot } from './view.js';
 
 describe('viewFromSnapshot', () => {
   it('keeps only what a frame needs, and finds the map', () => {
@@ -33,7 +33,7 @@ describe('viewFromSnapshot', () => {
     const ghost: Entity = { id: 'ghost', name: 'Ghost', components: {} };
     snapshot.entities.ghost = ghost;
     expect(viewFromSnapshot(snapshot).entities.ghost).toBeUndefined();
-    expect(emptyView()).toEqual({ mapId: null, map: null, entities: {} });
+    expect(emptyView()).toEqual({ mapId: null, map: null, entities: {}, initiative: null });
   });
 });
 
@@ -99,5 +99,41 @@ describe('applyDiffsToView', () => {
     const set: Diff = { type: 'ConditionSet', entity: 'player', condition: 'prone', active: true };
     applyDiffsToView(view, [set, set]);
     expect(view.entities.player?.conditions).toEqual(['prone']);
+  });
+});
+
+describe('applyDiffToView, turn order', () => {
+  it('tracks whose turn it is and what they have spent, from diffs alone', () => {
+    const view = emptyView();
+    const initiative = {
+      order: ['player', 'dummy-a'],
+      current: 0,
+      round: 1,
+      turn: { movedFt: 0, actionUsed: false, bonusActionUsed: false },
+    };
+    applyDiffToView(view, { type: 'TurnAdvanced', initiative, clock: 0 });
+    expect(view.initiative).toEqual(initiative);
+    expect(view.initiative).not.toBe(initiative); // the diff is never held by reference
+
+    applyDiffToView(view, {
+      type: 'EconomySpent',
+      entity: 'player',
+      turn: { movedFt: 15, actionUsed: true, bonusActionUsed: false },
+    });
+    expect(view.initiative!.turn).toEqual({
+      movedFt: 15,
+      actionUsed: true,
+      bonusActionUsed: false,
+    });
+
+    applyDiffToView(view, { type: 'TurnAdvanced', initiative: null, clock: 2 });
+    expect(view.initiative).toBeNull();
+    // An economy spend with no encounter running is ignored rather than throwing.
+    applyDiffToView(view, {
+      type: 'EconomySpent',
+      entity: 'player',
+      turn: { movedFt: 5, actionUsed: false, bonusActionUsed: false },
+    });
+    expect(view.initiative).toBeNull();
   });
 });

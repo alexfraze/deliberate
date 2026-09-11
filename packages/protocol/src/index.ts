@@ -258,8 +258,52 @@ export interface EntitySpawned {
   entity: Entity;
 }
 
+/**
+ * Turn order changed: an encounter began, the turn passed to the next entity, or the encounter
+ * ended (`initiative: null`). Absolute like every other diff — it carries the whole
+ * `InitiativeState`, so folding it twice lands where folding it once did. `world.clock` travels
+ * with it because the in-world clock only moves when a turn advance wraps the order into a new
+ * round. Added in ALE-13: without it a diff-driven client cannot see whose turn it is.
+ */
+export interface TurnAdvanced {
+  type: 'TurnAdvanced';
+  initiative: InitiativeState | null;
+  /** `world.clock`, in rounds, after the advance. */
+  clock: number;
+}
+
+/**
+ * The entity whose turn it is spent part of its economy: feet of movement, its action, or its
+ * bonus action. `turn` is the whole economy after the spend, not the delta. Added in ALE-13:
+ * without it a diff-driven client cannot see what is left to spend.
+ */
+export interface EconomySpent {
+  type: 'EconomySpent';
+  entity: EntityId;
+  turn: TurnEconomy;
+}
+
+/**
+ * An entity turned on the spot — an attacker squaring up to its target. A move already carries
+ * facing in `EntityMoved.path`; this covers the case where nothing else about the position
+ * changed. Added in ALE-13.
+ */
+export interface FacingChanged {
+  type: 'FacingChanged';
+  entity: EntityId;
+  facing: Direction8;
+}
+
 export type Diff =
-  EntityMoved | DamageApplied | ConditionSet | DialogueLine | FlagSet | EntitySpawned;
+  | EntityMoved
+  | DamageApplied
+  | ConditionSet
+  | DialogueLine
+  | FlagSet
+  | EntitySpawned
+  | TurnAdvanced
+  | EconomySpent
+  | FacingChanged;
 
 export type DiffType = Diff['type'];
 
@@ -270,6 +314,9 @@ export const DIFF_TYPES: readonly DiffType[] = [
   'DialogueLine',
   'FlagSet',
   'EntitySpawned',
+  'TurnAdvanced',
+  'EconomySpent',
+  'FacingChanged',
 ] as const;
 
 // ---------------------------------------------------------------------------------------------

@@ -397,3 +397,112 @@ describe('emit', () => {
     expect(diff.entity.name).toBe('Entity s0');
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Combat. This is the gap ALE-13 closed: the rules layer used to mutate `initiative` (turn order,
+// round, turn economy), `world.clock` and the attacker's facing without emitting anything, so the
+// fold above was exact only out of combat. `TurnAdvanced`, `EconomySpent` and `FacingChanged` make
+// it exact through an encounter, which is what a diff-driven client needs to show whose turn it is.
+// ---------------------------------------------------------------------------------------------
+
+const DUMMY_A = 'dummy-a';
+const DUMMY_B = 'dummy-b';
+
+/**
+ * A menu of intents rather than free coordinates: random tiles almost never walk into reach of a
+ * dummy, and an encounter that never starts would not test anything. Illegal entries stay in — a
+ * rejection must leave both the engine and the fold untouched.
+ */
+const COMBAT_MENU: readonly Intent[] = [
+  { kind: 'move', entity: FIXTURE_PLAYER_ID, to: { x: 5, y: 2 } },
+  { kind: 'move', entity: FIXTURE_PLAYER_ID, to: { x: 7, y: 3 } },
+  { kind: 'move', entity: FIXTURE_PLAYER_ID, to: { x: 7, y: 2 } },
+  { kind: 'move', entity: FIXTURE_PLAYER_ID, to: { x: 2, y: 2 } },
+  { kind: 'move', entity: FIXTURE_PLAYER_ID, to: { x: 0, y: 0 } }, // a wall: always refused
+  { kind: 'move', entity: DUMMY_A, to: { x: 8, y: 2 } },
+  { kind: 'attack', attacker: FIXTURE_PLAYER_ID, target: DUMMY_A, ability: 'longsword' },
+  { kind: 'attack', attacker: FIXTURE_PLAYER_ID, target: DUMMY_B, ability: 'longsword' },
+  { kind: 'attack', attacker: FIXTURE_PLAYER_ID, target: DUMMY_A, ability: 'dagger' }, // not held
+  { kind: 'attack', attacker: DUMMY_A, target: FIXTURE_PLAYER_ID, ability: 'unarmed' },
+  { kind: 'end_turn', entity: FIXTURE_PLAYER_ID },
+  { kind: 'end_turn', entity: DUMMY_A },
+];
+
+describe('apply against createEngine, in combat', () => {
+  it('reproduces the engine state through an encounter, by deep equality and by hash', () => {
+    let encounters = 0;
+    let advances = 0;
+    fc.assert(
+      fc.property(
+        fc.string({ minLength: 1, maxLength: 8 }),
+        fc.array(fc.constantFrom(...COMBAT_MENU), { minLength: 1, maxLength: 25 }),
+        (seed, intents) => {
+          const initial = fixtureSnapshot();
+          const engine = createEngine(initial, { seed });
+          const diffs: Diff[] = [];
+          for (const intent of intents) diffs.push(...engine.apply(intent).diff);
+          if (engine.snapshot().initiative) encounters += 1;
+          advances += diffs.filter((d) => d.type === 'TurnAdvanced').length;
+
+          const folded = apply(initial, diffs);
+          expect(folded).toStrictEqual(engine.snapshot());
+          expect(hashSnapshot(folded)).toBe(engine.hash());
+        },
+      ),
+      { seed: 8080, numRuns: 400 },
+    );
+    // Guard the guard: a run that never reached combat would pass the property vacuously.
+    expect(encounters).toBeGreaterThan(0);
+    expect(advances).toBeGreaterThan(0);
+  });
+
+  it('emits the turn order and the economy an opening attack changes', () => {
+    const engine = createEngine(fixtureSnapshot(), { seed: 'combat-diffs' });
+    expect(engine.apply({ kind: 'move', entity: FIXTURE_PLAYER_ID, to: { x: 7, y: 3 } }).ok).toBe(
+      true,
+    );
+    const opening = engine.apply({
+      kind: 'attack',
+      attacker: FIXTURE_PLAYER_ID,
+      target: DUMMY_A,
+      ability: 'longsword',
+    });
+    expect(opening.ok).toBe(true);
+    const kinds = opening.diff.map((d) => d.type);
+    // The encounter starts before anything else happens, and the spend is reported after it.
+    expect(kinds[0]).toBe('TurnAdvanced');
+    expect(kinds).toContain('EconomySpent');
+    const spent = opening.diff.find((d) => d.type === 'EconomySpent');
+    expect(spent).toMatchObject({ entity: FIXTURE_PLAYER_ID, turn: { actionUsed: true } });
+    const started = opening.diff.find((d) => d.type === 'TurnAdvanced');
+    expect(started?.type === 'TurnAdvanced' && started.initiative?.order).toContain(DUMMY_A);
+  });
+
+  it('reports a turn in place when the attacker squares up to its target', () => {
+    const engine = createEngine(fixtureSnapshot(), { seed: 'facing' });
+    // Walk to (8, 2), directly north of dummy A at (8, 3): the last step faces east, so the swing
+    // turns the player south without moving them — exactly the mutation that used to emit nothing.
+    for (const to of [
+      { x: 7, y: 2 },
+      { x: 8, y: 2 },
+    ]) {
+      expect(engine.apply({ kind: 'move', entity: FIXTURE_PLAYER_ID, to }).ok).toBe(true);
+    }
+    const before = engine.snapshot();
+    expect(before.entities[FIXTURE_PLAYER_ID]!.components.position!.facing).toBe('E');
+    const swing = engine.apply({
+      kind: 'attack',
+      attacker: FIXTURE_PLAYER_ID,
+      target: DUMMY_A,
+      ability: 'longsword',
+    });
+    expect(swing.ok).toBe(true);
+    expect(swing.diff).toContainEqual({
+      type: 'FacingChanged',
+      entity: FIXTURE_PLAYER_ID,
+      facing: 'S',
+    });
+    expect(apply(before, swing.diff)).toStrictEqual(engine.snapshot());
+    expect(hashSnapshot(apply(before, swing.diff))).toBe(engine.hash());
+  });
+});

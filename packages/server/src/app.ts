@@ -11,12 +11,15 @@ import {
 import { PROTOCOL_VERSION, type RoomId, type Seed } from '@deliberate/protocol';
 
 import { parseClientFrame, toText } from './frames.js';
+import { recordSession, type Recording } from './recording.js';
 import { createRoom, type Room } from './room.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
     /** The single M0 room. Exposed so the recorder (ALE-30/ALE-13) can `app.room.onTurn(...)`. */
     room: Room;
+    /** The JSONL session recording, or null when `recordings` was not asked for. */
+    recording: Recording | null;
   }
 }
 
@@ -28,9 +31,14 @@ export interface AppOptions {
    * may replace this default with a map/seed chosen at startup.
    */
   engine?: Engine;
-  /** Seed for the default engine. Ignored when `engine` is injected. */
+  /** Seed for the default engine, and the seed written into a recording's header. */
   seed?: Seed;
   room?: RoomId;
+  /**
+   * Directory for JSONL session recordings. `null` (the default) records nothing, which is what
+   * unit tests and CI want; `src/index.ts` passes `recordings`. The file is closed with the app.
+   */
+  recordings?: string | null;
 }
 
 /**
@@ -41,10 +49,14 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   const app = Fastify({ logger: opts.logger ?? false });
   await app.register(websocket);
 
-  const engine =
-    opts.engine ?? createEngine(fixtureSnapshot(), { seed: opts.seed ?? FIXTURE_SEED });
+  const seed = opts.seed ?? FIXTURE_SEED;
+  const engine = opts.engine ?? createEngine(fixtureSnapshot(), { seed });
   const room = createRoom(opts.room ? { engine, id: opts.room } : { engine });
   app.decorate('room', room);
+
+  const recording = opts.recordings ? recordSession(room, { dir: opts.recordings, seed }) : null;
+  app.decorate('recording', recording);
+  app.addHook('onClose', () => recording?.close());
 
   app.get('/healthz', async () => ({
     ok: true,
@@ -52,6 +64,9 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     protocol: PROTOCOL_VERSION,
     room: room.id,
     turn: room.turn(),
+    // The JSONL this session is being written to, so `pnpm replay` (and the acceptance suite)
+    // knows which file to check. Null when recording is off.
+    recording: recording?.path ?? null,
   }));
 
   app.get('/ws', { websocket: true }, (socket) => {

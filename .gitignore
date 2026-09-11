@@ -12,3 +12,4 @@ recordings/*.jsonl
 !recordings/.gitkeep
 test-results/
 playwright-report/
+e2e/.recordings/

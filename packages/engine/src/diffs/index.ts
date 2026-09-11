@@ -3,10 +3,13 @@ export {
   conditionSet,
   damageApplied,
   dialogueLine,
+  economySpent,
   entityMoved,
   entitySpawned,
+  facingChanged,
   flagDiffs,
   flagSet,
   healthDiffs,
   movedDiff,
+  turnAdvanced,
 } from './emit.js';

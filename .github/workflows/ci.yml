@@ -27,3 +27,29 @@ jobs:
       - run: pnpm format:check
       - run: pnpm test
       - run: pnpm build
+
+  # The M0 acceptance run: a real browser against the real client, server and engine, then a
+  # replay of the JSONL it recorded. Kept out of `check` on purpose — `check` is the required
+  # job and must not depend on a browser download.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Runners have no browser cache, so this job provisions its own. Chromium only.
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-failure
+          path: |
+            test-results/
+            e2e/.recordings/
+          retention-days: 7

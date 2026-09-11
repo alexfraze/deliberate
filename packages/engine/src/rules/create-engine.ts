@@ -194,14 +194,14 @@ function applyMove(ctx: EngineContext, intent: MoveIntent): Verdict {
     y: to.y,
     ...(facing ? { facing } : {}),
   });
+  const diffs: Diff[] = [{ type: 'EntityMoved', entity: intent.entity, from, to, path: steps }];
   if (init) {
     const turn = economyOf(init);
-    ctx.store.setInitiative({
-      ...init,
-      turn: { ...turn, movedFt: turn.movedFt + steps.length * TILE_FEET },
-    });
+    const spent = { ...turn, movedFt: turn.movedFt + steps.length * TILE_FEET };
+    ctx.store.setInitiative({ ...init, turn: spent });
+    diffs.push({ type: 'EconomySpent', entity: intent.entity, turn: spent });
   }
-  return accept([{ type: 'EntityMoved', entity: intent.entity, from, to, path: steps }]);
+  return accept(diffs);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -307,7 +307,18 @@ function applyAttack(ctx: EngineContext, intent: AttackIntent): Verdict {
   const check = checkAttack(ctx.store, intent);
   if (isVerdict(check)) return check;
   const { actor, target, weapon, distanceFt, offhand } = check;
-  const init = check.init ?? startEncounter(ctx, actor.entity.id);
+
+  const diffs: Diff[] = [];
+  let init = check.init;
+  if (!init) {
+    // The first attack starts the encounter: initiative for everyone, the attacker acting first.
+    init = startEncounter(ctx, actor.entity.id);
+    diffs.push({
+      type: 'TurnAdvanced',
+      initiative: structuredClone(init),
+      clock: ctx.store.clock(),
+    });
+  }
 
   const result: AttackResult = resolveAttack(ctx.rng, {
     attacker: { stats: actor.stats, health: actor.health },
@@ -318,7 +329,6 @@ function applyAttack(ctx: EngineContext, intent: AttackIntent): Verdict {
     offhand,
   });
 
-  const diffs: Diff[] = [];
   if (result.hit) {
     const after = applyDamage(target.health, result.damage);
     const died = after.hp <= 0 && !hasCondition(after, 'dead');
@@ -342,13 +352,14 @@ function applyAttack(ctx: EngineContext, intent: AttackIntent): Verdict {
   }
 
   const turn = economyOf(init);
-  ctx.store.setInitiative({
-    ...init,
-    turn: offhand ? { ...turn, bonusActionUsed: true } : { ...turn, actionUsed: true },
-  });
+  const spent = offhand ? { ...turn, bonusActionUsed: true } : { ...turn, actionUsed: true };
+  ctx.store.setInitiative({ ...init, turn: spent });
+  diffs.push({ type: 'EconomySpent', entity: actor.entity.id, turn: spent });
+
   const facing = directionTo(actor.position, target.position);
   if (facing && facing !== actor.position.facing) {
     ctx.store.setComponent(actor.entity.id, 'position', { ...actor.position, facing });
+    diffs.push({ type: 'FacingChanged', entity: actor.entity.id, facing });
   }
   return accept(diffs);
 }
@@ -372,5 +383,7 @@ function applyEndTurn(ctx: EngineContext, intent: EndTurnIntent): Verdict {
   const next = advanceTurn(ctx.store, init);
   ctx.store.setInitiative(next.state);
   if (next.roundsPassed > 0) ctx.store.setClock(ctx.store.clock() + next.roundsPassed);
-  return accept([]);
+  return accept([
+    { type: 'TurnAdvanced', initiative: structuredClone(next.state), clock: ctx.store.clock() },
+  ]);
 }

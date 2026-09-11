@@ -15,6 +15,8 @@ export interface Hud {
   setBackend(backend: string): void;
   setStatus(status: string): void;
   setSelection(selection: string | null): void;
+  /** Whose turn it is and what they have left, straight off the diff stream. Null out of combat. */
+  setTurn(turn: string | null): void;
   /** The last reason the server refused an intent. Null clears it. */
   setError(reason: string | null): void;
   /** One line of transient feedback ("Moving to (4, 5)…"). */
@@ -38,6 +40,7 @@ export function createHud(hudElement: HTMLElement, overlay: HTMLElement): Hud {
     backend: 'starting',
     status: 'connecting',
     selection: null as string | null,
+    turn: null as string | null,
     hint: null as string | null,
     error: null as string | null,
   };
@@ -45,6 +48,7 @@ export function createHud(hudElement: HTMLElement, overlay: HTMLElement): Hud {
   const render = (): void => {
     const lines = [line('renderer', state.backend), line('server', state.status)];
     lines.push(line('selected', state.selection ?? 'nothing — click an entity'));
+    lines.push(line('turn', state.turn ?? 'exploration — no encounter'));
     if (state.hint) lines.push(`<span class="hud-hint">${escapeHtml(state.hint)}</span>`);
     if (state.error)
       lines.push(`<span class="hud-error">refused: ${escapeHtml(state.error)}</span>`);
@@ -64,6 +68,10 @@ export function createHud(hudElement: HTMLElement, overlay: HTMLElement): Hud {
     },
     setSelection(selection) {
       state.selection = selection;
+      render();
+    },
+    setTurn(turn) {
+      state.turn = turn;
       render();
     },
     setError(reason) {
