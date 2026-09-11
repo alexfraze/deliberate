@@ -4,20 +4,26 @@ import type {
   DamageApplied,
   Diff,
   DialogueLine,
+  Direction8,
+  EconomySpent,
   Entity,
   EntityId,
   EntityMoved,
   EntitySpawned,
+  FacingChanged,
   FlagSet,
   FlagValue,
   Health,
+  InitiativeState,
   Position,
   Tile,
+  TurnAdvanced,
+  TurnEconomy,
   World,
 } from '@deliberate/protocol';
 
 /**
- * Constructors for the six diff types, plus before/after helpers that turn a pair of component
+ * Constructors for the diff types, plus before/after helpers that turn a pair of component
  * values into the diffs that describe the change. The rules layer mutates the store and calls
  * these, so the wire shape lives in one place and `apply` in apply.ts stays its exact inverse.
  *
@@ -65,6 +71,18 @@ export function flagSet(key: string, value: FlagValue): FlagSet {
 
 export function entitySpawned(entity: Entity): EntitySpawned {
   return { type: 'EntitySpawned', entity: structuredClone(entity) };
+}
+
+export function turnAdvanced(initiative: InitiativeState | null, clock: number): TurnAdvanced {
+  return { type: 'TurnAdvanced', initiative: structuredClone(initiative), clock };
+}
+
+export function economySpent(entity: EntityId, turn: TurnEconomy): EconomySpent {
+  return { type: 'EconomySpent', entity, turn: { ...turn } };
+}
+
+export function facingChanged(entity: EntityId, facing: Direction8): FacingChanged {
+  return { type: 'FacingChanged', entity, facing };
 }
 
 // ---------------------------------------------------------------------------------------------
