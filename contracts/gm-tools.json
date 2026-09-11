@@ -1,7 +1,7 @@
 {
-  "$comment": "The GM tool contract. ONE copy, two languages: TypeScript imports it via @deliberate/protocol (GM_TOOLS) and the Python GM service loads it and passes the entries straight to the Anthropic `tools` parameter. Entries are exactly {name, description, input_schema} so no key has to be stripped before the API call; the query/mutation split is the two arrays, not a field. Every input_schema sets additionalProperties:false and lists every property in `required` (optional arguments are nullable rather than absent) because the service calls the model with strict schemas. Decision 2 of docs/m1-swarm.md.",
+  "$comment": "The GM tool contract. ONE copy, two languages: TypeScript imports it via @deliberate/protocol (GM_TOOLS) and the Python GM service loads it with deliberate_gm.contracts.load_tools and passes the entries straight to the Anthropic `tools` parameter. Entries are exactly {name, description, input_schema} so nothing has to be stripped before the API call, and `tools` is one flat array in the order the model sees — queries first, then mutations — because a stable order is what keeps the cached prompt prefix cacheable. The query/mutation split is the name tuples on both sides (GM_QUERY_TOOL_NAMES / QUERY_TOOL_NAMES), not a field here. Every input_schema sets additionalProperties:false and lists every property in `required` (optional arguments are nullable rather than absent) because the service calls the model with strict schemas. Decision 2 of docs/m1-swarm.md.",
   "version": 1,
-  "queries": [
+  "tools": [
     {
       "name": "get_state",
       "description": "Read the authoritative world state. Free and read-only: it never changes anything and never consumes a die roll. Use it before deciding anything; never guess at positions, hit points or whose turn it is.",
@@ -203,9 +203,7 @@
         "required": ["action"],
         "additionalProperties": false
       }
-    }
-  ],
-  "mutations": [
+    },
     {
       "name": "move",
       "description": "Walk an entity to a tile. The engine validates the route, the movement budget and the turn order, and rejects anything illegal without changing the world. Maps to the same validated `move` intent the player's UI sends.",

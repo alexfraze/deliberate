@@ -647,24 +647,6 @@ export type GmQueryToolName = (typeof GM_QUERY_TOOL_NAMES)[number];
 export type GmMutationToolName = (typeof GM_MUTATION_TOOL_NAMES)[number];
 export type GmToolName = GmQueryToolName | GmMutationToolName;
 
-/**
- * The parsed contract. The cast is the one place the JSON meets the type system; `gm.test.ts`
- * asserts the file really has this shape and that its names match the tuples above, so the cast
- * cannot quietly become a lie.
- */
-const contract = gmToolContract as unknown as {
-  version: number;
-  queries: readonly GmToolDefinition[];
-  mutations: readonly GmToolDefinition[];
-};
-
-export const GM_CONTRACT_VERSION: number = contract.version;
-export const GM_QUERY_TOOLS: readonly GmToolDefinition[] = contract.queries;
-export const GM_MUTATION_TOOLS: readonly GmToolDefinition[] = contract.mutations;
-
-/** Every tool, queries first — the array to hand to the model. */
-export const GM_TOOLS: readonly GmToolDefinition[] = [...GM_QUERY_TOOLS, ...GM_MUTATION_TOOLS];
-
 export function isGmQueryTool(name: string): name is GmQueryToolName {
   return (GM_QUERY_TOOL_NAMES as readonly string[]).includes(name);
 }
@@ -672,6 +654,28 @@ export function isGmQueryTool(name: string): name is GmQueryToolName {
 export function isGmMutationTool(name: string): name is GmMutationToolName {
   return (GM_MUTATION_TOOL_NAMES as readonly string[]).includes(name);
 }
+
+/**
+ * The parsed contract. The cast is the one place the JSON meets the type system; `gm.test.ts`
+ * asserts the file really has this shape and that its names match the tuples above, so the cast
+ * cannot quietly become a lie.
+ */
+const contract = gmToolContract as unknown as {
+  version: number;
+  tools: readonly GmToolDefinition[];
+};
+
+export const GM_CONTRACT_VERSION: number = contract.version;
+
+/** Every tool in file order — queries first, then mutations. This is the array the model sees. */
+export const GM_TOOLS: readonly GmToolDefinition[] = contract.tools;
+
+export const GM_QUERY_TOOLS: readonly GmToolDefinition[] = GM_TOOLS.filter((t) =>
+  isGmQueryTool(t.name),
+);
+export const GM_MUTATION_TOOLS: readonly GmToolDefinition[] = GM_TOOLS.filter((t) =>
+  isGmMutationTool(t.name),
+);
 
 export function gmTool(name: string): GmToolDefinition | undefined {
   return GM_TOOLS.find((t) => t.name === name);

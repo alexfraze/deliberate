@@ -50,6 +50,11 @@ function objectSchemas(schema: JsonSchema, path: string): [string, JsonSchema][]
 describe('gm tool contract', () => {
   it('is version 1 with the fifteen blueprint tools, queries first', () => {
     expect(GM_CONTRACT_VERSION).toBe(1);
+    // File order is the order the model sees and must stay stable: it is the cached prefix.
+    expect(GM_TOOLS.map((t) => t.name)).toEqual([
+      ...GM_QUERY_TOOL_NAMES,
+      ...GM_MUTATION_TOOL_NAMES,
+    ]);
     expect(GM_QUERY_TOOLS.map((t) => t.name)).toEqual([...GM_QUERY_TOOL_NAMES]);
     expect(GM_MUTATION_TOOLS.map((t) => t.name)).toEqual([...GM_MUTATION_TOOL_NAMES]);
     expect(GM_TOOLS).toHaveLength(15);
