@@ -216,6 +216,16 @@ prompt, tool schemas, the engine's state summary, the player's intent and speech
 measured first, and **memory gets what is left**. That is what makes the budget a ceiling
 rather than a hope; `TurnResponse.prompt_tokens_estimate` reports the result.
 
+Measuring happens locally, in `tokens.py`: budgeting runs inside a turn and must not cost a
+network round trip. The familiar "~4 characters per token" is for unstructured English, and
+this prompt is mostly JSON — fifteen tool schemas, a state summary, a ledger — which
+tokenizes far denser. Measured against `messages.count_tokens` on real payloads it is 2.49
+to 2.86 characters per token, so the estimator uses **2.5**: at 4 it ran about 40% under, and
+a "12k budget" was letting 20k through. 2.5 sits at the dense end, so the estimate errs high
+— shedding a little memory early is a much cheaper mistake than blowing the context window.
+`tests/test_live.py` re-checks that calibration against the real tokenizer, and checks that a
+fully loaded turn really does fit 12k once the model counts it.
+
 When memory does not fit, blocks are shed in a fixed order: player profile, then world-model
 notes oldest-first, then the ledger folds further into its digest. The ledger is shed last
 and never entirely — it is the only block that records what actually happened.

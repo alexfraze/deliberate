@@ -34,6 +34,7 @@ from .models import (
     Usage,
 )
 from .prompt import REDACTION, build_user_message, find_leak, scan_strings, system_blocks
+from .tokens import estimate_tokens
 
 #: How a local tool reaches the engine: same door, same verdict, same trace.
 NestedCall = Callable[[str, dict[str, Any]], GmToolResult]
@@ -411,16 +412,6 @@ def _accumulate(usage: Usage, raw: dict[str, int]) -> None:
     usage.output_tokens += int(raw.get("output_tokens", 0))
     usage.cache_read_input_tokens += int(raw.get("cache_read_input_tokens", 0))
     usage.cache_creation_input_tokens += int(raw.get("cache_creation_input_tokens", 0))
-
-
-def estimate_tokens(value: Any) -> int:
-    """Cheap local estimate, ~4 characters per token.
-
-    Deliberately local: budgeting must not cost a network round trip inside a turn. The
-    numbers it produces are used for trimming decisions and for reporting a turn's prompt
-    size, not for billing.
-    """
-    return max(1, len(json.dumps(value, ensure_ascii=False, default=str)) // 4)
 
 
 def trim_messages(
