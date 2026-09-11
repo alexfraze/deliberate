@@ -34,7 +34,18 @@ function isTile(value: unknown): value is Tile {
   return isRecord(value) && Number.isInteger(value['x']) && Number.isInteger(value['y']);
 }
 
-/** Type guard for the M0 intents. Legality is the engine's job; this only checks the shape. */
+/**
+ * The intents a **player** may compose. Legality is the engine's job; this only checks the shape —
+ * and who is allowed to ask at all, which the engine deliberately does not decide.
+ *
+ * ALE-31 added six intent kinds for the game master's tools. Four of them — `spawn`, `set_flag`,
+ * `advance_quest` and `set_disposition` — are world authoring: legal for the engine to perform and
+ * nothing a person at a keyboard should be able to send. The engine validates that a `spawn` names
+ * a real template; it has no concept of who asked. So the wire stops here, and those four reach the
+ * engine only through `POST /gm/tool`. `cast` and `say` are player actions and are accepted.
+ */
+const PLAYER_INTENTS = 'move, attack, cast, say, end_turn';
+
 export function isIntent(value: unknown): value is Intent {
   if (!isRecord(value)) return false;
   switch (value['kind']) {
@@ -44,6 +55,19 @@ export function isIntent(value: unknown): value is Intent {
       return isId(value['attacker']) && isId(value['target']) && isId(value['ability']);
     case 'end_turn':
       return isId(value['entity']);
+    case 'cast':
+      return isId(value['caster']) && isId(value['spell']) && isId(value['target']);
+    case 'say': {
+      const to = value['to'];
+      const said = value['text'];
+      return (
+        isId(value['speaker']) &&
+        typeof said === 'string' &&
+        said.length > 0 &&
+        said.length <= MAX_TEXT_LENGTH &&
+        (to === null || isId(to))
+      );
+    }
     default:
       return false;
   }
@@ -89,7 +113,7 @@ export function parseClientFrame(text: string): FrameResult {
       }
       const intent = value['intent'];
       if (!isIntent(intent)) {
-        return bad('That is not an action this server understands (move, attack, end_turn).');
+        return bad(`That is not an action this server understands (${PLAYER_INTENTS}).`);
       }
       return { ok: true, message: { type: 'intent', room, turn: turn as number, intent } };
     }
@@ -102,7 +126,7 @@ export function parseClientFrame(text: string): FrameResult {
       }
       const intent = value['intent'] ?? null;
       if (intent !== null && !isIntent(intent)) {
-        return bad('That is not an action this server understands (move, attack, end_turn).');
+        return bad(`That is not an action this server understands (${PLAYER_INTENTS}).`);
       }
       const text = value['text'];
       if (text !== undefined && (typeof text !== 'string' || text.length > MAX_TEXT_LENGTH)) {
