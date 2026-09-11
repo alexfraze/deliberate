@@ -8,8 +8,9 @@ Every message carries `room` (the MVP has one room, `"main"`, the `DEFAULT_ROOM`
 multiplayer does not change the shapes. Text frames only; binary frames are decoded as UTF-8 and
 must still be JSON.
 
-`GET /healthz` answers `{ ok, engine, protocol, room, turn, recording }` and needs no socket.
-`recording` is the JSONL file this session is being written to, or `null` when recording is off.
+`GET /healthz` answers `{ ok, engine, protocol, room, turn, recording, save }` and needs no socket.
+`recording` is the JSONL file this session is being written to, or `null` when recording is off;
+`save` is the file `POST /save` writes, or `null` when saving is off.
 
 ## The turn number
 
@@ -193,6 +194,20 @@ room knowing anything about files. Listeners must not throw; the room does not c
 server, closed with the app. The default is `null` — no recording — so unit tests and CI write
 nothing; `packages/server/src/index.ts` passes `recordings` (override with `RECORDINGS_DIR`, or
 set it empty to turn recording off).
+
+## `POST /save` — one JSON document per session (ALE-23)
+
+`POST /save` writes the session to `<SAVES_DIR>/<room>.json` and answers
+`{ ok, path, turn, hash }`. It is a save slot, not a history: the file is replaced each time, and
+the JSONL recording above is the history. Database persistence is roadmap P2 (ALE-26).
+
+The file (`SaveFile` in `@deliberate/protocol`, version `SAVE_VERSION`) carries the snapshot, the
+room's turn counter, the scene, the seed, **the RNG stream position**, and the GM's memory blocks.
+The stream position is the part a snapshot cannot give you: without it a resumed session restores
+the same state hash and then rolls dice the uninterrupted session had already spent, so it stops
+replaying. Loading is a restart rather than a frame — `packages/server/src/index.ts` reads
+`DELIBERATE_LOAD` before the app is built, because `buildApp` does no I/O — and a file whose
+`save` version is not this build's is refused rather than half read.
 
 ## Answers to the questions this page used to ask
 
