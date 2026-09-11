@@ -140,3 +140,7 @@ class TurnResponse(BaseModel):
     usage: Usage = Field(default_factory=Usage)
     #: What the assembled prompt cost, so a session can be watched against the 12k budget.
     prompt_tokens_estimate: int = 0
+    #: Anything the leakage guard caught on the way out. Empty is the normal case; a
+    #: non-empty list belongs in the recording, because it means a turn tried to disclose
+    #: the prompt or carry it to the player through an NPC's mouth.
+    redactions: list[str] = Field(default_factory=list)

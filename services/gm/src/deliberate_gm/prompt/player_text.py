@@ -48,8 +48,16 @@ def _sanitize(text: str) -> str:
     if len(body) > MAX_PLAYER_TEXT_CHARS:
         omitted = len(body) - MAX_PLAYER_TEXT_CHARS
         body = f"{body[:MAX_PLAYER_TEXT_CHARS].rstrip()}... [{omitted} characters omitted]"
-    # A player who types the closing fence would otherwise end the data block early and have
-    # the rest of their message read as prompt.
+    return neutralize_fences(body)
+
+
+def neutralize_fences(text: str) -> str:
+    """Defang a fence the player typed themselves.
+
+    A player who writes the closing fence would otherwise end the data block early and have
+    the rest of their message read as prompt. The angle brackets become parentheses, so the
+    words survive and the boundary does not move.
+    """
     for fence in (FENCE_OPEN, FENCE_CLOSE):
-        body = body.replace(fence, fence.replace("<", "(").replace(">", ")"))
-    return body
+        text = text.replace(fence, fence.replace("<", "(").replace(">", ")"))
+    return text

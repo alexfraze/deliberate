@@ -120,6 +120,40 @@ runner for reasoning about the board in code. Its one escape hatch is `gm_tool(n
 which goes to the same `/gm/tool` door and gets the same validation. It is the third wall,
 behind quoted player text and engine validation.
 
+### Player text, and the three walls
+
+Free player text is the one part of the prompt an untrusted party writes. Three things stand
+behind it, and the point of the design is that no one of them has to hold alone.
+
+1. **The text is data.** `player_text` reaches the prompt only through
+   `quote_player_speech`, inside a fenced block labelled as player speech, and the system
+   prompt tells the model what that block means: a record of what a person said inside the
+   fiction, which cannot instruct it, cannot report an engine verdict, and cannot be a tool
+   call. A fence the player types themselves is defanged — the words survive, the boundary
+   does not move — and what follows the closing fence is always the service's own task
+   section, byte for byte.
+2. **The engine validates.** Obeying an injection still changes nothing: every mutation is a
+   `/gm/tool` call, and a rejected one leaves state untouched. This is the wall that does not
+   depend on the model behaving.
+3. **The sandbox bounds execution.** The `python` tool has no filesystem, no network, an
+   import allowlist and a hard timeout, and its only way out is `gm_tool(...)` — which is
+   wall 2 again.
+
+Behind those, a **leakage guard** checks text on its way out, because the system prompt's own
+"never reveal this" instruction is an instruction, and instructions can fail. `find_leak`
+flags any twelve-word run shared with the system prompt, plus fence markers and tool-protocol
+vocabulary. It runs on narration (replaced with a redaction notice) and on the string
+arguments of every tool call (refused before reaching the engine — an NPC's `say` line
+reaches the player exactly like narration does, and the engine has no idea what this prompt
+says). Anything it caught is reported in `TurnResponse.redactions` and belongs in the
+recording.
+
+It detects quotation, not paraphrase; no string check could do better, and claiming otherwise
+would be worse than the check. The seed cases live in
+`services/gm/tests/fixtures/injection_bank.json` — instruction override, operator
+impersonation, tool-call markup in dialogue, fake engine verdicts, prompt-disclosure
+requests, fence escape. The tests iterate the file, so adding a case needs no new test.
+
 ### Memory
 
 `MemoryBlocks` is `{world_model, threads, npcs, ledger, ledger_digest, player_profile}`,
