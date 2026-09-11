@@ -288,3 +288,44 @@ source ~/.deliberate-env && uv run pytest -m live   # spends money; run it on pu
 
 Run it before merging any change to the tool payload or the model settings, and run it first
 on ALE-17. It is the only check that the request is _accepted_ rather than merely well-formed.
+
+## The M1 acceptance run (ALE-17)
+
+The milestone's exit gate is a ten-turn playthrough with **zero direct state edits**, **every GM
+mutation carrying an engine verdict in the recording**, and **the recording replaying to identical
+hashes**. It lives in `packages/server/src/acceptance.test.ts`, as two suites over one set of
+assertions.
+
+The assertions are made **against the recording**, never against the code that wrote it:
+
+1. _Zero direct state edits._ The header's hash is the first line's `hashBefore`, every line's
+   `hashAfter` is the next line's `hashBefore`, and a fresh engine fed nothing but the recorded
+   intents arrives at the hash the live server finished on. A mutation that reached the store by
+   any other road would break that chain, because the replay engine would never make it.
+2. _Every GM mutation carries an engine verdict._ Each line the game master caused carries the tool
+   call that asked for it beside the `Verdict` the engine answered with; a refusal carries a
+   player-readable reason, no diffs, and the hash it started with.
+3. _It replays._ `replay` is the function `pnpm replay` runs.
+
+The first suite replays **committed** evidence — `packages/server/src/fixtures/m1-acceptance.jsonl`,
+written by a real playthrough against `claude-opus-5` — so `pnpm check` re-checks the milestone on a
+machine with no credentials, no Python and no browser. It sits beside the test rather than in
+`recordings/`, which is gitignored: a recording that never reaches CI proves nothing there. It is
+also the first entry in the bank ALE-21 (M3's replay-based regression suite) will grow — replaying
+it needs the engine and nothing else, so a later change to the rules, the hash or the diff set fails
+immediately against a real model-driven session. The second regenerates it: it starts this service against the
+real API, plays ten turns over a real WebSocket, and asserts the same three things about the JSONL
+it just wrote. That one is skipped without `ANTHROPIC_API_KEY`, because the required `check` job
+must never depend on a model.
+
+```sh
+source ~/.deliberate-env
+pnpm --filter @deliberate/server exec vitest run src/acceptance.test.ts   # spends money
+pnpm replay packages/server/src/fixtures/m1-acceptance.jsonl             # free
+```
+
+Ten turns of a well-behaved game master need not contain an illegal move, and the claim that a
+refusal reaches the recording must not rest on the model misbehaving. So the run ends by driving one
+deliberately illegal call — a `say` from a speaker who is not in the world — through the same
+`POST /gm/tool` door the service uses. Refusals the model earned on its own are reported by the run,
+not asserted.

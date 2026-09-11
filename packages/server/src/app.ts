@@ -79,6 +79,14 @@ export interface AppOptions {
    * is what the M0 acceptance path and a credential-free machine want.
    */
   gm?: GmService | null;
+  /**
+   * Per-phase ceilings on the game master, in milliseconds. Defaults are the blueprint's
+   * (`PREVIEW_BUDGET_MS` and friends). They are an option because the blueprint's numbers are a
+   * target the model does not meet yet: a real `claude-opus-5` turn with adaptive thinking and a
+   * tool loop takes tens of seconds, and a budget that always aborts turns "the GM is slow" into
+   * "the GM never answered". `src/index.ts` reads them from the environment; ALE-17 passes its own.
+   */
+  budgets?: { preview?: number; resolve?: number; narrate?: number };
   room?: RoomId;
   /**
    * Directory for JSONL session recordings. `null` (the default) records nothing, which is what
@@ -108,6 +116,9 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     room,
     registry,
     gm: opts.gm ?? null,
+    ...(opts.budgets?.preview ? { previewBudgetMs: opts.budgets.preview } : {}),
+    ...(opts.budgets?.resolve ? { resolveBudgetMs: opts.budgets.resolve } : {}),
+    ...(opts.budgets?.narrate ? { narrateBudgetMs: opts.budgets.narrate } : {}),
     log: (message) => app.log.warn(message),
   });
   app.decorate('gm', gm);
