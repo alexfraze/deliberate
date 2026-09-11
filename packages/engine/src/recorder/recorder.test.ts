@@ -213,6 +213,7 @@ describe('replay', () => {
       return {
         snapshot: () => real.snapshot(),
         hash: () => real.hash(),
+        rngCalls: () => real.rngCalls(),
         apply: (intent) => {
           calls += 1;
           return calls === 3 ? { ok: false, reason: 'drifted', diff: [] } : real.apply(intent);

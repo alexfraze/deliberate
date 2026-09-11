@@ -84,6 +84,8 @@ export interface GmLoopOptions {
   maxNpcTurns?: number;
   /** Entries the preview and NPC-decision caches keep. 0 turns caching off entirely (ALE-22). */
   cacheSize?: number;
+  /** Memory blocks to start from. Non-empty when resuming a save (ALE-23). */
+  memory?: MemoryBlocks;
   /** Somewhere to note a GM failure. Defaults to nothing; `buildApp` passes the Fastify logger. */
   log?: (message: string) => void;
 }
@@ -124,7 +126,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   const decisions = createTurnCache<CachedDecision>(cacheSize);
 
   let pending: PendingPreview | null = null;
-  let memory: MemoryBlocks = EMPTY_MEMORY;
+  let memory: MemoryBlocks = options.memory ?? EMPTY_MEMORY;
   /** One phase at a time. Two overlapping GOs would interleave mutations on one engine. */
   let inFlight: Promise<void> = Promise.resolve();
   let busy = false;

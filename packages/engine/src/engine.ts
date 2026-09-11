@@ -13,6 +13,12 @@ export interface Engine {
   hash(): StateHash;
   /** Validates the intent; on `ok` applies it and returns the diffs, otherwise touches nothing. */
   apply(intent: Intent): Verdict;
+  /**
+   * How many numbers the seeded RNG has drawn. Together with the seed and the snapshot it is the
+   * whole of the engine's state, which is what a save needs (ALE-23) — pass it back as
+   * `EngineOptions.rngCalls` and the rebuilt engine continues the same roll sequence.
+   */
+  rngCalls(): number;
 }
 
 export interface EngineOptions {
@@ -24,6 +30,12 @@ export interface EngineOptions {
    * `content/npcs/`. Omitted means no templates, and every `spawn` is rejected.
    */
   templates?: Readonly<Record<string, Entity>>;
+  /**
+   * Resume the seeded RNG at this stream position instead of the start (ALE-23). Only a load
+   * should pass it: a clone deliberately does not, because a preview must not be able to spend
+   * the real session's rolls (`packages/server/src/gm/engines.ts`).
+   */
+  rngCalls?: number;
 }
 
 /** Signature the engine package exports once ALE-8 lands. Declared here so consumers can type it. */

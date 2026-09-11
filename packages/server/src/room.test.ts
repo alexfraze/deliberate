@@ -34,6 +34,7 @@ function fakeEngine(verdicts: Verdict[]): FakeEngine {
     applied,
     snapshot: emptySnapshot,
     hash: () => `hash-${version}`,
+    rngCalls: () => version,
     apply(intent) {
       applied.push(intent);
       const verdict = verdicts.shift() ?? { ok: false, reason: 'no verdict queued', diff: [] };

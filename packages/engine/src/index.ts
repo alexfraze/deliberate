@@ -12,6 +12,7 @@
  *   src/rules/     ALE-9   SRD 5.1 trimmed rules, action economy, initiative, seeded RNG
  *   src/diffs/     ALE-10  diff emission and apply(snapshot, diffs)
  *   src/recorder/  ALE-30  JSONL recorder and replay
+ *   src/save/      ALE-23  save file: store, RNG stream position and GM memory in one JSON
  *   src/gm/        ALE-31  GM tool contract: query handlers and tool-call -> intent mapping
  */
 
@@ -22,6 +23,7 @@ export * from './grid/index.js';
 export * from './hash/index.js';
 export * from './recorder/index.js';
 export * from './rules/index.js';
+export * from './save/index.js';
 export * from './store/index.js';
 
 export const ENGINE_VERSION = '0.0.0' as const;

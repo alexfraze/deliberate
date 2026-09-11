@@ -8,6 +8,12 @@ export interface Rng {
   int(min: number, max: number): number;
   /** A dN roll: integer in [1, sides]. */
   roll(sides: number): number;
+  /**
+   * How many numbers have been drawn from this stream. A save records it and a load resumes
+   * there (ALE-23): restoring state without restoring the position would hand the resumed
+   * session rolls the uninterrupted one had already spent, and the replay would diverge.
+   */
+  calls(): number;
 }
 
 /** FNV-1a 32-bit hash so string seeds map to a 32-bit state. */
@@ -23,10 +29,19 @@ function hashSeed(seed: Seed): number {
 /**
  * mulberry32: small, fast, and good enough for dice. Not cryptographic. Chosen because it is
  * trivially reproducible in Python for the M1 LLM service if that ever needs to mirror a roll.
+ *
+ * `calls` resumes a stream that had already been drawn from (ALE-23). mulberry32 advances its
+ * state by a constant per draw, so a position is restored in one step rather than by replaying
+ * the draws — `Math.imul` because the product is wanted modulo 2^32, not as a float.
  */
-export function createRng(seed: Seed): Rng {
-  let state = hashSeed(seed);
+export function createRng(seed: Seed, calls = 0): Rng {
+  if (!Number.isInteger(calls) || calls < 0) {
+    throw new RangeError(`createRng: calls must be a non-negative integer, got ${calls}`);
+  }
+  let drawn = calls;
+  let state = (hashSeed(seed) + Math.imul(calls, 0x6d2b79f5)) >>> 0;
   const next = (): number => {
+    drawn += 1;
     state = (state + 0x6d2b79f5) >>> 0;
     let t = state;
     t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -44,5 +59,6 @@ export function createRng(seed: Seed): Rng {
     roll(sides) {
       return this.int(1, sides);
     },
+    calls: () => drawn,
   };
 }

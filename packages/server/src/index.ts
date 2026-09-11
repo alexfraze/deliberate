@@ -4,6 +4,7 @@ import { buildApp } from './app.js';
 import { DEFAULT_CACHE_SIZE } from './gm/cache.js';
 import { NARRATE_BUDGET_MS, PREVIEW_BUDGET_MS, RESOLVE_BUDGET_MS } from './gm/loop.js';
 import { httpGmService } from './gm/service.js';
+import { loadSave } from './save.js';
 
 const port = Number(process.env['PORT'] ?? 8787);
 const host = process.env['HOST'] ?? '127.0.0.1';
@@ -17,6 +18,16 @@ const recordings = dir ? resolve(process.env['INIT_CWD'] ?? process.cwd(), dir) 
 // Which world to boot. The M1 gatehouse by default; the acceptance suite (ALE-13) asks for the
 // M0 fixture, which it plays by UI alone and replays hash-for-hash.
 const scene = process.env['DELIBERATE_SCENE'] === 'fixture' ? 'fixture' : 'gatehouse';
+
+// Save slot (ALE-23). SAVES_DIR is where `POST /save` writes `<room>.json`; set it to an empty
+// string to turn saving off. DELIBERATE_LOAD names a save to resume instead of booting a scene:
+// the file is read here, before the app exists, because `buildApp` does no I/O.
+const savesDir = process.env['SAVES_DIR'] ?? 'saves';
+const saves = savesDir ? resolve(process.env['INIT_CWD'] ?? process.cwd(), savesDir) : null;
+const loadPath = process.env['DELIBERATE_LOAD'] ?? null;
+const load = loadSave(
+  loadPath ? resolve(process.env['INIT_CWD'] ?? process.cwd(), loadPath) : null,
+);
 
 // The Python game master (docs/gm-service.md). Unset means no model in the loop: preview shows
 // the engine's own resolution and GO commits it, which is what a machine with no credentials gets.
@@ -41,6 +52,8 @@ const cacheSize = Number(process.env['GM_CACHE_SIZE'] ?? DEFAULT_CACHE_SIZE);
 const app = await buildApp({
   logger: true,
   recordings,
+  saves,
+  load,
   scene,
   budgets,
   ...(Number.isFinite(cacheSize) ? { cacheSize } : {}),
@@ -50,4 +63,6 @@ const app = await buildApp({
 });
 if (gmUrl) app.log.info({ gm: gmUrl }, 'game master service');
 if (app.recording) app.log.info({ file: app.recording.path }, 'recording this session');
+if (load) app.log.info({ turn: load.turn, hash: load.hash }, 'resumed a save');
+if (app.save) app.log.info({ file: app.save.path }, 'POST /save writes here');
 await app.listen({ port, host });

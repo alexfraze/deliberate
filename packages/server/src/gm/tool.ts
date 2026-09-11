@@ -143,6 +143,7 @@ function engineFor(deps: GmToolDeps, handle: EngineHandle, call: GmToolCall): En
   return {
     snapshot: () => handle.engine.snapshot(),
     hash: () => handle.engine.hash(),
+    rngCalls: () => handle.engine.rngCalls(),
     apply: (intent): Verdict => room.commitGmCall(intent, call),
   };
 }

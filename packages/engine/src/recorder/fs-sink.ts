@@ -1,6 +1,17 @@
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import type { SaveFile } from '@deliberate/protocol';
+
+import { saveFromJSON, saveToJSON } from '../save/save.js';
 import type { BankEntry, BankManifest } from './bank.js';
 import type { LineSink } from './sink.js';
 
@@ -8,6 +19,9 @@ import type { LineSink } from './sink.js';
  * The one module in `@deliberate/engine` that touches the filesystem. It is deliberately outside
  * the engine's pure core: the recorder writes through the `LineSink` interface and never imports
  * this, so engine tests stay I/O free. The server (ALE-13) wires it to `recordings/<ts>.jsonl`.
+ *
+ * Save files (ALE-23) live here for the same reason: `src/save/` builds and validates the
+ * document, and these two functions are the only part of it that touches a disk.
  */
 
 /** Appends lines to `path`, creating the directory and the file. Keeps the descriptor open. */
@@ -51,4 +65,15 @@ export function loadBank(dir: string): BankEntry[] {
     session,
     lines: readLines(join(dir, session.file)),
   }));
+}
+
+/** Write a save (ALE-23) to `path`, creating the directory. Replaces any file already there. */
+export function writeSave(path: string, save: SaveFile): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, saveToJSON(save), 'utf8');
+}
+
+/** Read a save back, validated. Throws `SaveError` on a file this build cannot resume. */
+export function readSave(path: string): SaveFile {
+  return saveFromJSON(readFileSync(path, 'utf8'));
 }

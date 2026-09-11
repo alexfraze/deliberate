@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 
 import {
   createEngine,
+  engineFromSave,
   ENGINE_VERSION,
   FIXTURE_SEED,
   fixtureSnapshot,
@@ -13,6 +14,7 @@ import {
   PROTOCOL_VERSION,
   type Entity,
   type RoomId,
+  type SaveFile,
   type Seed,
   type Snapshot,
 } from '@deliberate/protocol';
@@ -24,6 +26,7 @@ import type { GmService } from './gm/service.js';
 import { executeGmToolRequest, parseGmToolRequest } from './gm/tool.js';
 import { recordSession, type Recording } from './recording.js';
 import { createRoom, type Room } from './room.js';
+import { saveSlot, type SaveSlot } from './save.js';
 
 /**
  * Which world the room boots. `gatehouse` is the M1 scene (ALE-16): a guard, a merchant and a
@@ -37,6 +40,11 @@ interface Scene {
   seed: Seed;
   /** Entity templates the GM's `spawn` tool may instantiate, keyed by template id. */
   templates: Record<string, Entity>;
+}
+
+/** The scene a save names, when this build still has it. Anything else falls back to the default. */
+export function sceneName(name: string | null | undefined): SceneName | null {
+  return name === 'fixture' || name === 'gatehouse' ? name : null;
 }
 
 export function loadScene(name: SceneName): Scene {
@@ -58,6 +66,8 @@ declare module 'fastify' {
     recording: Recording | null;
     /** The preview-then-GO loop (ALE-32). Always present; the game master behind it may not be. */
     gm: GmLoop;
+    /** The JSON save slot (ALE-23), or null when `saves` was not asked for. */
+    save: SaveSlot | null;
   }
 }
 
@@ -98,6 +108,18 @@ export interface AppOptions {
    * unit tests and CI want; `src/index.ts` passes `recordings`. The file is closed with the app.
    */
   recordings?: string | null;
+  /**
+   * A save to resume (ALE-23). Its snapshot, seed, RNG stream position, turn counter and GM
+   * memory blocks replace the scene's, so the room picks the session up exactly where it stopped
+   * — including the next roll. `src/index.ts` reads the file; taking the parsed document rather
+   * than a path keeps `buildApp` free of I/O.
+   */
+  load?: SaveFile | null;
+  /**
+   * Directory `POST /save` writes to. `null` (the default) means no save route, which is what
+   * unit tests want; `src/index.ts` passes `saves`.
+   */
+  saves?: string | null;
 }
 
 /**
@@ -108,10 +130,21 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   const app = Fastify({ logger: opts.logger ?? false });
   await app.register(websocket);
 
-  const scene = loadScene(opts.scene ?? 'gatehouse');
-  const seed = opts.seed ?? scene.seed;
-  const engine = opts.engine ?? createEngine(scene.snapshot, { seed, templates: scene.templates });
-  const room = createRoom(opts.room ? { engine, id: opts.room } : { engine });
+  const save = opts.load ?? null;
+  // A save names the scene it was booted from, so `spawn` templates come back with it.
+  const name = opts.scene ?? sceneName(save?.scene) ?? 'gatehouse';
+  const scene = loadScene(name);
+  const seed = opts.seed ?? save?.seed ?? scene.seed;
+  const engine =
+    opts.engine ??
+    (save
+      ? engineFromSave(save, { templates: scene.templates })
+      : createEngine(scene.snapshot, { seed, templates: scene.templates }));
+  const room = createRoom({
+    engine,
+    ...(opts.room ? { id: opts.room } : {}),
+    ...(save ? { turn: save.turn } : {}),
+  });
   app.decorate('room', room);
 
   // One registry per room. It holds the real engine and mints clones for previews; `/gm/tool`
@@ -121,6 +154,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     room,
     registry,
     gm: opts.gm ?? null,
+    ...(save ? { memory: save.memory } : {}),
     ...(opts.budgets?.preview ? { previewBudgetMs: opts.budgets.preview } : {}),
     ...(opts.budgets?.resolve ? { resolveBudgetMs: opts.budgets.resolve } : {}),
     ...(opts.budgets?.narrate ? { narrateBudgetMs: opts.budgets.narrate } : {}),
@@ -136,6 +170,17 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   app.decorate('recording', recording);
   app.addHook('onClose', () => recording?.close());
 
+  const slot = opts.saves ? saveSlot(room, gm, { dir: opts.saves, seed, scene: name }) : null;
+  app.decorate('save', slot);
+  if (slot) {
+    // Saving is a player action, not a lifecycle event: the room keeps running, and the file is
+    // replaced. Loading is a restart — `src/index.ts` reads the file before the app is built.
+    app.post('/save', async (_request, reply) => {
+      const written = slot.write();
+      return reply.send({ ok: true, path: slot.path, turn: written.turn, hash: written.hash });
+    });
+  }
+
   app.get('/healthz', async () => ({
     ok: true,
     engine: ENGINE_VERSION,
@@ -147,6 +192,8 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     recording: recording?.path ?? null,
     // Preview and NPC-decision cache hit rates for this session (ALE-22).
     cache: gm.cache(),
+    // Where `POST /save` writes (ALE-23). Null when saving is off.
+    save: slot?.path ?? null,
   }));
 
   /**

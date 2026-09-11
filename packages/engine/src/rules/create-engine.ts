@@ -59,12 +59,13 @@ import { inRange, WEAPON_ACTION, type AttackAction, type Weapon } from './weapon
  */
 export function createEngine(initial: Snapshot, options: EngineOptions): Engine {
   const store = createStore(initial);
-  const rng = createRng(options.seed);
+  const rng = createRng(options.seed, options.rngCalls ?? 0);
   const ctx: EngineContext = { store, rng, templates: options.templates ?? {} };
 
   return {
     snapshot: () => store.snapshot(),
     hash: () => hashSnapshot(store.snapshot()),
+    rngCalls: () => rng.calls(),
     apply(intent) {
       switch (intent.kind) {
         case 'move':
