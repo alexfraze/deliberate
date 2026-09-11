@@ -63,6 +63,8 @@ export interface GameScene {
   /** 0 = untouched, 1 = fully flashed. Used by the damage animation. */
   flashEntity(id: EntityId, amount: number): void;
   setHover(tile: Tile | null): void;
+  /** The tile the player clicked with nothing selected. Null clears the marker. */
+  setTileMarker(tile: Tile | null): void;
   /** 1 fits the whole map; larger moves the camera in. Clamped to sensible bounds. */
   setZoom(zoom: number): void;
   setSelected(id: EntityId | null): void;
@@ -100,6 +102,13 @@ export function createGameScene(): GameScene {
   );
   hover.visible = false;
   scene.add(hover);
+
+  const marker = new Mesh(
+    new BoxGeometry(TILE_SIZE * 0.9, 0.06, TILE_SIZE * 0.9),
+    new MeshStandardMaterial({ color: 0x8ecae6, emissive: 0x1d4c63 }),
+  );
+  marker.visible = false;
+  scene.add(marker);
 
   const ring = new Mesh(
     new RingGeometry(CAPSULE_RADIUS + 0.06, CAPSULE_RADIUS + 0.16, 28),
@@ -204,6 +213,16 @@ export function createGameScene(): GameScene {
     hover.visible = true;
   };
 
+  const setTileMarker = (tile: Tile | null): void => {
+    if (!map || !tile) {
+      marker.visible = false;
+      return;
+    }
+    const point = tileToWorld(map, tile.x, tile.y);
+    marker.position.set(point.x, visualTopY(map, tile) + 0.05, point.z);
+    marker.visible = true;
+  };
+
   const setSelected = (id: EntityId | null): void => {
     selected = id;
     ring.visible = id !== null && entityMeshes.has(id);
@@ -284,6 +303,7 @@ export function createGameScene(): GameScene {
     placeEntity,
     flashEntity,
     setHover,
+    setTileMarker,
     setZoom,
     setSelected,
     pick,

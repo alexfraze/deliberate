@@ -31,7 +31,7 @@ test('renders the fixture map and animates the scripted diffs', async ({ page })
   expect(errors).toEqual([]);
 });
 
-test('clicking a tile with nothing selected tells the player what to do', async ({ page }) => {
+test('clicking a tile with nothing selected inspects it', async ({ page }) => {
   await page.goto('/?fixture=1');
   const canvas = page.locator('#app canvas');
   await expect(canvas).toBeVisible();
@@ -39,5 +39,7 @@ test('clicking a tile with nothing selected tells the player what to do', async 
 
   await canvas.click({ position: { x: 40, y: 40 } }); // off the map: clears any selection
   await canvas.click(); // centre of the canvas is over the map
-  await expect(page.locator('#hud')).toContainText(/Select an entity first|Selected/);
+  await expect(page.locator('#hud')).toContainText(
+    /tile \(\d+, \d+\) · (walkable|blocked)|Selected/,
+  );
 });

@@ -9,12 +9,14 @@ import {
   DEFAULT_ROOM,
   PROTOCOL_VERSION,
   type EntityId,
+  type MapRecord,
   type ServerMessage,
   type Tile,
 } from '@deliberate/protocol';
 import { REVISION, Vector2 } from 'three/webgpu';
 
 import { AnimationQueue, samplePath, type Animation, type QueueEvent } from './animation.js';
+import { cellAt } from './grid.js';
 import { createHud, type FloatingNumber } from './hud.js';
 import { createRenderer } from './renderer.js';
 import { createGameScene } from './scene.js';
@@ -174,11 +176,22 @@ renderer.domElement.addEventListener('pointermove', (event) => {
   renderer.domElement.style.cursor = pick.kind === 'entity' ? 'pointer' : 'default';
 });
 
+function describeTile(map: MapRecord | null, tile: Tile): string {
+  const cell = map ? cellAt(map, tile) : undefined;
+  if (!cell) return `tile (${tile.x}, ${tile.y})`;
+  return `tile (${tile.x}, ${tile.y}) · ${cell.walkable ? 'walkable' : 'blocked'} · elevation ${cell.elevation}`;
+}
+
 renderer.domElement.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return;
-  const result = resolvePick(selected, scene.pick(toNdc(event)));
+  const pick = scene.pick(toNdc(event));
+  const result = resolvePick(selected, pick);
   setSelected(result.selected);
-  if (result.hint !== null) hud.setHint(result.hint);
+  // With nothing selected, a click just inspects the tile; with an entity selected it is a move.
+  const marked = pick.kind === 'tile' && result.intent === null ? pick.tile : null;
+  scene.setTileMarker(marked);
+  if (marked) hud.setHint(describeTile(view.map, marked));
+  else if (result.hint !== null) hud.setHint(result.hint);
   if (result.intent) {
     hud.setError(null);
     transport.send({ type: 'intent', room: DEFAULT_ROOM, turn, intent: result.intent });
