@@ -110,13 +110,54 @@ behind quoted player text and engine validation.
 
 ### Memory
 
-`MemoryBlocks` is `{world_model, threads, npcs, ledger, player_profile}`, re-injected every
-turn and capped at 12k input tokens (ALE-15).
+`MemoryBlocks` is `{world_model, threads, npcs, ledger, ledger_digest, player_profile}`,
+re-injected every turn. Node sends the blocks in and gets the updated blocks back; the
+service persists nothing.
 
-The **verified ledger** is generated here from engine verdicts, never from model text. Each
-line records an attempted mutation and what the engine decided about it. A model that claims
-it hit cannot enter that claim as fact: the line says `rejected` because `ok` came back
-false.
+| Block            | Written by                                       | Checked by                           |
+| ---------------- | ------------------------------------------------ | ------------------------------------ |
+| `world_model`    | the model, via `World model:` lines in its reply | the engine's entity list — see below |
+| `threads`        | the engine (quest id and step)                   | —                                    |
+| `npcs`           | goals: the model; **dispositions: the engine**   | —                                    |
+| `ledger`         | **the engine**, from its own verdicts            | —                                    |
+| `player_profile` | the model, via `Player:` lines                   | capped at 8 notes                    |
+
+Only two blocks are model-authored. A reply's labelled lines are harvested into those two and
+nowhere else, and an unrecognised label (`Ledger:`, `Disposition:`) ends the previous note
+rather than continuing it, so text cannot be smuggled into a model block under an
+engine-owned heading.
+
+**World-model notes are checked against the engine's entity list.** A note referencing an
+entity id (`npc:gorm`) the engine does not have is dropped whole — the model cannot furnish
+itself with people who do not exist. `TurnRequest.entities` is where that list comes from, so
+Node must send it.
+
+**Dispositions are engine numbers.** The People block renders `disposition` straight from
+`TurnRequest.memory.npcs`. A note claiming a different number appears in the world-model
+block as the model's own belief, never as a disposition.
+
+#### The verified ledger
+
+Generated here from engine verdicts, never from model text. Each line is one attempted
+mutation and what the engine decided about it. A model that claims it hit cannot enter that
+claim as fact: the line says `rejected` because `ok` came back false. Queries leave no line.
+
+Old lines are **compacted, not truncated**. Rolling truncation would silently delete the
+evidence that a plan already failed — exactly the evidence that stops the model retrying it.
+Compaction folds old lines into `ledger_digest`: per-tool applied/rejected counts, the
+reasons the engine gave, and the turn span. It is counts rather than prose, so it is bounded
+by construction and a session of any length keeps its full outcome history.
+
+#### The token budget
+
+The MVP budget is ≤ 12k input tokens per turn. The fixed parts of the prompt — system
+prompt, tool schemas, the engine's state summary, the player's intent and speech — are
+measured first, and **memory gets what is left**. That is what makes the budget a ceiling
+rather than a hope; `TurnResponse.prompt_tokens_estimate` reports the result.
+
+When memory does not fit, blocks are shed in a fixed order: player profile, then world-model
+notes oldest-first, then the ledger folds further into its digest. The ledger is shed last
+and never entirely — it is the only block that records what actually happened.
 
 ## Model settings
 

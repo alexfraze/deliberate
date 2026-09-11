@@ -33,6 +33,21 @@ class LedgerEntry(BaseModel):
     reason: str | None = None
 
 
+class LedgerDigest(BaseModel):
+    """Older ledger lines, compacted rather than truncated.
+
+    Counts, not prose, so a session of any length costs a fixed number of tokens while still
+    remembering every outcome the engine produced.
+    """
+
+    from_turn: int
+    to_turn: int
+    total: int = 0
+    applied: dict[str, int] = Field(default_factory=dict)
+    rejected: dict[str, int] = Field(default_factory=dict)
+    reasons: dict[str, int] = Field(default_factory=dict)
+
+
 class MemoryBlocks(BaseModel):
     """Prompt memory, re-injected every turn.
 
@@ -43,7 +58,9 @@ class MemoryBlocks(BaseModel):
     world_model: list[str] = Field(default_factory=list)
     threads: list[dict[str, Any]] = Field(default_factory=list)
     npcs: list[dict[str, Any]] = Field(default_factory=list)
+    #: Recent verbatim lines. Older ones live in `ledger_digest`.
     ledger: list[LedgerEntry] = Field(default_factory=list)
+    ledger_digest: LedgerDigest | None = None
     player_profile: list[str] = Field(default_factory=list)
 
 

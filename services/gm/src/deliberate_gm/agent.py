@@ -21,6 +21,8 @@ from .config import Settings
 from .contracts import tool_names
 from .engine_client import EngineClient
 from .llm import LLMClient, LLMRequest, LLMResult
+from .memory import blocks as memory_blocks
+from .memory import notes as memory_notes
 from .models import (
     GmToolCall,
     GmToolResult,
@@ -79,9 +81,8 @@ class GmAgent:
     def run_turn(self, request: TurnRequest) -> TurnResponse:
         memory = request.memory.model_copy(deep=True)
         system = system_blocks()
-        messages: list[dict[str, Any]] = [
-            build_user_message(request, memory_text=self._memory_text(memory, request))
-        ]
+        first_message, memory = self._build_turn_message(request, memory, system)
+        messages: list[dict[str, Any]] = [first_message]
         prompt_tokens = estimate_tokens(
             {"system": system, "messages": messages, "tools": self._tools}
         )
@@ -107,6 +108,7 @@ class GmAgent:
             text = result.text()
             if text.strip():
                 narration = text.strip()
+            self._harvest(memory, text, request)
 
             tool_uses = result.tool_uses()
             if not tool_uses:
@@ -245,9 +247,40 @@ class GmAgent:
 
     # -- memory ---------------------------------------------------------------------------
 
-    def _memory_text(self, memory: MemoryBlocks, request: TurnRequest) -> str:
-        """Overridden in ALE-15 by the memory-block renderer. ALE-14 renders nothing."""
-        return ""
+    def _build_turn_message(
+        self, request: TurnRequest, memory: MemoryBlocks, system: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any], MemoryBlocks]:
+        """Give memory whatever the budget has left after the fixed parts of the prompt.
+
+        The system prompt, the tool schemas and the engine's state summary are not
+        negotiable; the memory blocks are. Measuring the rest first is what makes the 12k
+        budget a real ceiling rather than a hope.
+        """
+        bare = build_user_message(request, memory_text="")
+        overhead = estimate_tokens({"system": system, "tools": self._tools, "messages": [bare]})
+        budget = max(memory_blocks.MIN_MEMORY_TOKENS, self._settings.input_token_budget - overhead)
+        memory_text, fitted = memory_blocks.render(memory, budget=budget)
+        return build_user_message(request, memory_text=memory_text), fitted
+
+    def _harvest(self, memory: MemoryBlocks, text: str, request: TurnRequest) -> None:
+        """Take the model's notes into the two model-authored blocks -- and only those two.
+
+        Threads, dispositions and the ledger come from the engine; nothing written in a reply
+        can reach them. World-model notes naming an entity the engine does not have are
+        dropped, so the model cannot introduce people by asserting them.
+        """
+        if not text.strip():
+            return
+        harvested = memory_notes.harvest(text)
+        world_model, _dropped = memory_notes.check_entities(
+            harvested["world_model"], set(request.entities)
+        )
+        memory.world_model = memory_notes.merge(
+            memory.world_model, world_model, block="world_model"
+        )
+        memory.player_profile = memory_notes.merge(
+            memory.player_profile, harvested["player_profile"], block="player_profile"
+        )
 
 
 # -- helpers ------------------------------------------------------------------------------
