@@ -76,7 +76,8 @@ export interface AppOptions {
   /**
    * Engine the room drives. Defaults to the real `createEngine` over the M0 fixture snapshot;
    * tests inject a fake so they never depend on the rules. TODO(ALE-13): the acceptance issue
-   * may replace this default with a map/seed chosen at startup.
+   * may replace this default with a map/seed chosen at startup. An injected engine wins over
+   * `load`: the save's turn counter and memory still apply, its store and dice position do not.
    */
   engine?: Engine;
   /** Seed for the default engine, and the seed written into a recording's header. */
@@ -130,20 +131,20 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   const app = Fastify({ logger: opts.logger ?? false });
   await app.register(websocket);
 
-  const save = opts.load ?? null;
+  const loaded = opts.load ?? null;
   // A save names the scene it was booted from, so `spawn` templates come back with it.
-  const name = opts.scene ?? sceneName(save?.scene) ?? 'gatehouse';
+  const name = opts.scene ?? sceneName(loaded?.scene) ?? 'gatehouse';
   const scene = loadScene(name);
-  const seed = opts.seed ?? save?.seed ?? scene.seed;
+  const seed = opts.seed ?? loaded?.seed ?? scene.seed;
   const engine =
     opts.engine ??
-    (save
-      ? engineFromSave(save, { templates: scene.templates })
+    (loaded
+      ? engineFromSave(loaded, { templates: scene.templates })
       : createEngine(scene.snapshot, { seed, templates: scene.templates }));
   const room = createRoom({
     engine,
     ...(opts.room ? { id: opts.room } : {}),
-    ...(save ? { turn: save.turn } : {}),
+    ...(loaded ? { turn: loaded.turn } : {}),
   });
   app.decorate('room', room);
 
@@ -154,7 +155,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     room,
     registry,
     gm: opts.gm ?? null,
-    ...(save ? { memory: save.memory } : {}),
+    ...(loaded ? { memory: loaded.memory } : {}),
     ...(opts.budgets?.preview ? { previewBudgetMs: opts.budgets.preview } : {}),
     ...(opts.budgets?.resolve ? { resolveBudgetMs: opts.budgets.resolve } : {}),
     ...(opts.budgets?.narrate ? { narrateBudgetMs: opts.budgets.narrate } : {}),
