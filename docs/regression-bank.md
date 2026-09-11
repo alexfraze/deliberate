@@ -57,9 +57,16 @@ A regression suite that only ever passes is worthless, so `bank.test.ts` breaks 
 and requires each to turn it red: a drifting engine, a session that replays but describes a
 different world, a moved metric, and a tool call that no longer fits the contract.
 
-That is the permanent form. The one-off demonstration for ALE-21 was a rule perturbation in a
-scratch commit — `d8` to `d10` on the longsword — which took the bank from `ok bank: 5/5` to four
-failed sessions, including the live M1 playthrough, and was then reverted.
+That is the permanent form. Two one-off demonstrations were run against the real bank for ALE-21
+and then reverted:
+
+| perturbation                                              | result                                                                                                                        |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| longsword `d8` → `d10` in `rules/weapons.ts`              | `FAIL bank: 3/5` — two sessions diverge at the first landed hit, and the generated recordings stop reproducing byte for byte  |
+| `say.npc_id` → `say.speaker` in `contracts/gm-tools.json` | `FAIL bank: 3/5` — 17 recorded `say` calls, 15 of them in the live M1 playthrough, no longer fit the schema the model is sent |
+
+The second is the issue's "deliberately broken prompt": the tool schemas are part of the request,
+nothing about the recordings changed, every session still replays — and the bank is red anyway.
 
 ## Adding an entry
 
