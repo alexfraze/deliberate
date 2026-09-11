@@ -1,0 +1,22 @@
+{
+  "name": "@deliberate/npcs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "M1 NPC content: three archetypes (guard, merchant, wounded scout) and the gatehouse scene they stand in. Plain JSON data plus a typed loader that assembles a Snapshot. No behaviour: dialogue and combat are resolved by the GM through engine tools.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@deliberate/engine": "workspace:*",
+    "@deliberate/protocol": "workspace:*"
+  }
+}

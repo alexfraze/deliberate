@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    projects: ['packages/*', 'content/*'],
+    name: 'npcs',
+    include: ['src/**/*.test.ts'],
   },
 });

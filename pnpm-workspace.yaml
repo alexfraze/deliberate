@@ -1,5 +1,7 @@
 packages:
   - packages/*
+  # ALE-16: authored game content, loadable into a Snapshot. Data, not behaviour.
+  - content/*
 
 # pnpm 10 blocks postinstall scripts unless allowlisted. esbuild's script only validates its binary.
 onlyBuiltDependencies:

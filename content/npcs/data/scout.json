@@ -1,0 +1,70 @@
+{
+  "id": "scout-brannoc",
+  "archetype": "scout",
+  "name": "Brannoc, Wounded Scout",
+  "placement": { "x": 10, "y": 9, "facing": "W" },
+  "stats": {
+    "str": 11,
+    "dex": 14,
+    "con": 12,
+    "int": 11,
+    "wis": 13,
+    "cha": 11,
+    "ac": 12,
+    "speed": 30,
+    "proficiency": 2
+  },
+  "health": { "hp": 4, "maxHp": 13, "conditions": ["prone"] },
+  "inventory": {
+    "items": [{ "item": "dagger", "qty": 1 }]
+  },
+  "faction": { "id": "garrison" },
+  "disposition": {
+    "toward": { "player": 20, "gate-guard-halloran": 55, "merchant-ilva": 0 }
+  },
+  "brain": { "policy": "gm" },
+  "portrait": { "asset": "portraits/npc/wounded-scout.placeholder.png" },
+  "goals": [
+    {
+      "text": "Ask player for help before the last 4 hit points run out.",
+      "refs": ["player"],
+      "quest": "carry-the-scout"
+    },
+    {
+      "text": "Get word to gate-guard-halloran that the watchword is burned.",
+      "refs": ["gate-guard-halloran"],
+      "flag": "gatehouse.watchword.burned"
+    },
+    {
+      "text": "Stay down. scout-brannoc cannot stand on that leg.",
+      "refs": ["scout-brannoc"]
+    }
+  ],
+  "dialogue": [
+    {
+      "text": "Don't. Please. I can't even stand.",
+      "toward": "player",
+      "minDisposition": -100,
+      "maxDisposition": -1,
+      "tags": ["plead", "afraid"]
+    },
+    {
+      "text": "Water. And a healer, if there's one left in this yard.",
+      "toward": "player",
+      "minDisposition": 0,
+      "tags": ["plead", "greeting"]
+    },
+    {
+      "text": "My leg's gone. Get me to Halloran at the gate and I'll owe you the rest of it.",
+      "toward": "player",
+      "minDisposition": 15,
+      "tags": ["quest-hook"]
+    },
+    {
+      "text": "Something walked in behind me wearing our colours. The watchword is burned. Tell Halloran.",
+      "toward": "player",
+      "minDisposition": 40,
+      "tags": ["quest-hook", "secret", "trusted"]
+    }
+  ]
+}
