@@ -22,12 +22,42 @@
         left: 12px;
         bottom: 12px;
         font-size: 13px;
-        opacity: 0.8;
+        line-height: 1.6;
+        opacity: 0.9;
+        pointer-events: none;
+        text-shadow: 0 1px 2px #000;
+      }
+      .hud-label {
+        color: #7d8b99;
+        display: inline-block;
+        min-width: 66px;
+      }
+      .hud-hint {
+        color: #9fd0ff;
+      }
+      .hud-error {
+        color: #ff8a7a;
+      }
+      #overlay {
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      .float-number {
+        position: absolute;
+        left: 0;
+        top: 0;
+        font-size: 20px;
+        font-weight: 700;
+        text-shadow: 0 2px 4px #000;
+        will-change: transform, opacity;
       }
     </style>
   </head>
   <body>
     <div id="app"></div>
+    <div id="overlay"></div>
     <div id="hud"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
