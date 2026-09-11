@@ -15,6 +15,7 @@
  */
 
 export type { CreateEngine, Engine, EngineOptions } from './engine.js';
+export * from './grid/index.js';
 export { createRng, type Rng } from './rules/rng.js';
 
 export const ENGINE_VERSION = '0.0.0' as const;
