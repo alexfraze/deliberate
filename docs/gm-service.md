@@ -208,3 +208,11 @@ it was not scripted to accept — a stub that said yes to everything would let a
 the real engine would fail.
 
 Live calls happen only when `ANTHROPIC_API_KEY` is set. ALE-17 is the one issue that needs it.
+
+What a live call cannot be tested for without a key, `tests/test_llm.py` pins anyway: the
+exact request `AnthropicLLM` builds (adaptive thinking, `effort` inside `output_config`, no
+`budget_tokens`, no date-suffixed model id, no assistant prefill, streaming with the larger
+ceiling), the mapping from each typed SDK exception to one turn-level failure, and a check
+that every parameter name we send still exists on the installed SDK. Each of those is a 400 or
+404 that would otherwise surface on ALE-17's first real call. The one live smoke test in that
+file is skipped until the key exists.

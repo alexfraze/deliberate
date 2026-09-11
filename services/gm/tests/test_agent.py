@@ -267,3 +267,23 @@ def test_the_contract_decides_the_kind_not_the_engine(
     response = build(llm, engine, contract, settings).run_turn(turn_request)
     assert response.trace[0].kind == "mutation"
     assert [entry.outcome for entry in response.memory.ledger] == ["rejected"]
+
+
+def test_the_loop_never_ends_a_request_on_an_assistant_turn(
+    engine, contract, settings, turn_request
+) -> None:
+    """A trailing assistant message is an assistant prefill, and this model answers one with
+    a 400. Every request the loop builds must end on a user turn."""
+    engine.answer("recall", "nothing")
+    llm = ScriptedLLM(
+        [
+            call(("recall", {"topic": "x"}), ("recall", {"topic": "y"})),
+            call(("recall", {"topic": "z"})),
+            say("Enough reading."),
+        ]
+    )
+    build(llm, engine, contract, settings).run_turn(turn_request)
+
+    assert len(llm.requests) == 3
+    for index, request in enumerate(llm.requests):
+        assert request.messages[-1]["role"] == "user", f"request {index} ended on an assistant turn"
