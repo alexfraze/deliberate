@@ -13,7 +13,13 @@ import {
   rollMode,
 } from './attack.js';
 import { CONDITIONS, isAlive, isIncapacitated } from './conditions.js';
-import { advanceTurn, combatants, freshEconomy, rollInitiative } from './initiative.js';
+import {
+  actsOnItsOwn,
+  advanceTurn,
+  combatants,
+  freshEconomy,
+  rollInitiative,
+} from './initiative.js';
 import { createRng } from './rng.js';
 import { attackAbility, getWeapon, inRange, isRangedAttack, WEAPONS } from './weapons.js';
 
@@ -265,5 +271,24 @@ describe('initiative', () => {
     const over = advanceTurn(store, init);
     expect(over.state).toBeNull();
     expect(over.skipped).toHaveLength(3);
+  });
+
+  it('stops on a `gm` brain, so the game master can be asked what that entity does', () => {
+    // ALE-32. The NPCs in content/npcs all carry `brain.policy: 'gm'`; if initiative stepped over
+    // them the way it steps over scenery, no NPC would ever take a turn in an encounter.
+    const store = createStore(fixtureSnapshot());
+    store.setComponent('dummy-a', 'brain', { policy: 'gm' });
+    expect(actsOnItsOwn(store, 'dummy-a')).toBe(true);
+    expect(actsOnItsOwn(store, 'dummy-b')).toBe(false);
+
+    const init = {
+      order: [FIXTURE_PLAYER_ID, 'dummy-a', 'dummy-b'],
+      current: 0,
+      round: 1,
+      turn: freshEconomy(),
+    };
+    const next = advanceTurn(store, init);
+    expect(next.state?.current).toBe(1);
+    expect(next.skipped).toEqual([]);
   });
 });
