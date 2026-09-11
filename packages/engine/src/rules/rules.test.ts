@@ -237,7 +237,7 @@ describe('initiative', () => {
     const tie = createStore(fixtureSnapshot());
     for (const id of tie.entityIds()) tie.setComponent(id, 'stats', stats({ dex: 10 }));
     tie.setComponent('dummy-b', 'stats', stats({ dex: 11 }));
-    const fixed = { next: () => 0.5, int: () => 10, roll: () => 10 };
+    const fixed = { next: () => 0.5, int: () => 10, roll: () => 10, calls: () => 0 };
     expect(rollInitiative(tie, fixed).map((r) => r.entity)).toEqual([
       'dummy-b',
       'dummy-a',

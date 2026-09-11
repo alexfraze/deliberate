@@ -67,6 +67,8 @@ export type GmFrameHandler = (
 export interface RoomOptions {
   engine: Engine;
   id?: RoomId;
+  /** Turn the room starts on. Non-zero when resuming a save (ALE-23), so turn numbers continue. */
+  turn?: number;
 }
 
 export interface Room {
@@ -109,7 +111,7 @@ export function createRoom(options: RoomOptions): Room {
   const { engine } = options;
   const members = new Set<RoomSocket>();
   const listeners = new Set<TurnListener>();
-  let turn = 0;
+  let turn = options.turn ?? 0;
   let gmFrames: GmFrameHandler | null = null;
 
   const send = (socket: RoomSocket, message: ServerMessage): void => {

@@ -78,6 +78,11 @@ advantage/disadvantage, initiative).
   NPC-brain caches.
 - **Recording:** one JSONL line per turn (state hash, intent, tool calls + verdicts, diffs, tokens,
   latency), replayable with the engine alone.
+- **Save:** one JSON document (ALE-23) — the store, the world record, the room's turn counter, the
+  seed, the RNG stream position and the GM's memory blocks. The stream position is what a snapshot
+  cannot give you: without it a resumed session restores the same hash and then rolls dice the
+  uninterrupted one had already spent. Versioned, so a format change is detected rather than
+  misread. A database is roadmap P2 (ALE-26).
 
 These shapes are code in `packages/protocol/src/index.ts`.
 

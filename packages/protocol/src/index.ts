@@ -605,6 +605,52 @@ export interface RecordedTurn {
 export type RecordingLine = RecordingHeader | RecordedTurn;
 
 // ---------------------------------------------------------------------------------------------
+// Save files (ALE-23) — one JSON document that a restarted server can resume from
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Bumped when the layout below changes in a way an older loader would misread. It is a separate
+ * number from `PROTOCOL_VERSION` because a save outlives a process, so it is the one artefact
+ * where "silently read the wrong thing" is a real risk: a file whose `save` is not this number is
+ * refused rather than guessed at. Database persistence is roadmap P2 (ALE-26); this is JSON.
+ */
+export const SAVE_VERSION = 1 as const;
+
+/**
+ * A whole session in one JSON document: the store, the world record, the GM's memory blocks, and
+ * — the part that is easy to forget — where the seeded RNG had got to.
+ *
+ * Restoring the snapshot alone restores the state hash but not the *future*: `createRng` would
+ * start the stream again from the seed, so the next attack roll after a load would be a roll the
+ * uninterrupted session had already spent. `rngCalls` is what makes a resumed session continue
+ * the same sequence, and therefore what makes it replay.
+ */
+export interface SaveFile {
+  /** Discriminator and version in one. See `SAVE_VERSION`. */
+  save: typeof SAVE_VERSION;
+  protocol: typeof PROTOCOL_VERSION;
+  /** ISO-8601 wall clock, for a human choosing between files. Not part of the restored state. */
+  savedAt: string;
+  room: RoomId;
+  /** The turn the room was accepting intents for, so turn numbers continue rather than restart. */
+  turn: number;
+  seed: Seed;
+  /** How many numbers the seeded RNG had drawn. A load resumes the stream at this position. */
+  rngCalls: number;
+  /** Scene the world was booted from, so the GM's `spawn` templates come back. `null` if unknown. */
+  scene: string | null;
+  /** The full store, cosmetic components included: a load must look right as well as hash right. */
+  snapshot: Snapshot;
+  /** The hash at save time. A load checks what it rebuilt against this and refuses a mismatch. */
+  hash: StateHash;
+  /**
+   * The GM's memory blocks exactly as the service handed them back (ALE-15). Opaque here for the
+   * same reason as in the server: the shape lives in Python, and a second copy of it would drift.
+   */
+  memory: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------------------------
 // GM tool contract (ALE-31)
 // ---------------------------------------------------------------------------------------------
 

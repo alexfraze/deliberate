@@ -39,7 +39,12 @@ replaces the last preview, so changing your mind costs nothing.
 The server records the session to `recordings/<timestamp>.jsonl`; `pnpm replay` that file to
 check it re-runs to identical hashes.
 
-Server environment: `PORT`, `HOST`, `RECORDINGS_DIR` (empty to record nothing),
+`POST /save` writes the whole session — store, turn counter, dice position and the game master's
+memory — to `saves/<room>.json`; start the server with `DELIBERATE_LOAD=saves/main.json` to pick it
+back up, dice and all.
+
+Server environment: `PORT`, `HOST`, `RECORDINGS_DIR` (empty to record nothing), `SAVES_DIR`
+(empty for no save route), `DELIBERATE_LOAD` (a save file to resume),
 `DELIBERATE_SCENE` (`gatehouse`, the default, or `fixture` for the M0 training yard), and
 `GM_SERVICE_URL` — the Python game master (`services/gm`, see [docs/gm-service.md](docs/gm-service.md)).
 Without `GM_SERVICE_URL` there is no model in the loop: preview shows the engine's own resolution
