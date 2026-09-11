@@ -579,6 +579,14 @@ export interface RecordingHeader {
   startedAt: string;
   snapshot: Snapshot;
   hash: StateHash;
+  /**
+   * Entity templates the session's engine was built with (`EngineOptions.templates`). A snapshot
+   * and a seed are not quite the whole engine: `spawn` reads the template table, so a session in
+   * which the GM spawned — or was refused because a template was missing — only replays if the
+   * replay engine is given the same table. Optional and omitted when empty, so every recording
+   * written before ALE-21 replays exactly as it did before.
+   */
+  templates?: Record<string, Entity>;
 }
 
 export interface RecordedTurn {

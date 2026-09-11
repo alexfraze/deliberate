@@ -1,3 +1,17 @@
+export {
+  bankExpectation,
+  formatBankReport,
+  runBank,
+  runBankSession,
+  type BankEntry,
+  type BankExpectation,
+  type BankManifest,
+  type BankMetrics,
+  type BankObjective,
+  type BankReport,
+  type BankResult,
+  type BankSession,
+} from './bank.js';
 export { encodeLine, parseLine, parseRecording, RecordingError, splitLines } from './jsonl.js';
 export {
   createRecorder,

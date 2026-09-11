@@ -124,7 +124,9 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   app.decorate('gm', gm);
   room.setGmFrames((socket, message) => gm.handle(socket, message));
 
-  const recording = opts.recordings ? recordSession(room, { dir: opts.recordings, seed }) : null;
+  const recording = opts.recordings
+    ? recordSession(room, { dir: opts.recordings, seed, templates: scene.templates })
+    : null;
   app.decorate('recording', recording);
   app.addHook('onClose', () => recording?.close());
 

@@ -1,6 +1,7 @@
 import {
   DEFAULT_ROOM,
   PROTOCOL_VERSION,
+  type Entity,
   type Intent,
   type RecordedTurn,
   type RecordingHeader,
@@ -36,6 +37,12 @@ export interface RecorderOptions {
   room?: RoomId;
   /** Defaults to an in-memory sink, which is what tests want. */
   sink?: LineSink;
+  /**
+   * The engine's `templates` table, recorded in the header so `replay` can rebuild the same
+   * engine. Omitted (or empty) leaves the field off the header entirely, which is what every
+   * recording written before ALE-21 looks like.
+   */
+  templates?: Readonly<Record<string, Entity>>;
 }
 
 /** Everything a turn carries beyond the intent and the verdict. All optional; all zero in M0. */
@@ -82,6 +89,9 @@ export function createRecorder(engine: Engine, options: RecorderOptions): Record
     startedAt: options.startedAt,
     snapshot: engine.snapshot(),
     hash: engine.hash(),
+    ...(options.templates && Object.keys(options.templates).length > 0
+      ? { templates: structuredClone(options.templates) as Record<string, Entity> }
+      : {}),
   };
   sink.write(encodeLine(header));
 
