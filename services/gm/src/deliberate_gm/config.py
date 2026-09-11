@@ -10,7 +10,25 @@ from pathlib import Path
 #: Model defaults are fixed by docs/m1-swarm.md decision 7. `budget_tokens` does not appear
 #: anywhere in this service: it is removed on this model and returns a 400.
 DEFAULT_MODEL = "claude-opus-5"
-DEFAULT_EFFORT = "high"
+
+#: Effort was `high` through M1 and is `medium` from ALE-24, on measurement rather than taste.
+#: Three ten-turn playthroughs of the ALE-16 gatehouse against the live model, identical beats,
+#: read back out of their recordings with `pnpm meters`:
+#:
+#:     effort   preview p50   after-GO p50   after-GO p95   $/turn    GM mutations
+#:     high        30.1 s         9.4 s         78.0 s      $0.2585        61
+#:     medium      23.5 s         8.8 s         26.6 s      $0.1853        57
+#:     low         16.4 s         4.6 s         23.5 s      $0.1370        35
+#:
+#: `medium` is the setting that costs nothing to take: it clears M3's "p50 after GO under 10 s"
+#: with margin, cuts the p95 tail by 2.9x, saves 28% per turn, and the game master still does as
+#: much -- 57 mutations against high's 61, and the acceptance run passes unchanged.
+#:
+#: `low` is faster and cheaper again and it also passes, but it visibly thins the world: 35
+#: mutations, 43% fewer than `high`. That is a game-design call about how much the game master
+#: should do per turn, not a latency decision, so it is left to `GM_EFFORT=low` rather than taken
+#: here. `GM_EFFORT` is the one-line change either way.
+DEFAULT_EFFORT = "medium"
 
 
 def _repo_root() -> Path:

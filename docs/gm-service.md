@@ -244,7 +244,10 @@ Fixed by decision 7, and easy to get wrong from memory:
 
 - model id is exactly `claude-opus-5` — never a date suffix;
 - thinking is `{"type": "adaptive"}` — `budget_tokens` is removed on this model and returns a 400;
-- depth is `output_config={"effort": "high"}` — `effort` lives inside `output_config`;
+- depth is `output_config={"effort": ...}` — `effort` lives inside `output_config`. The default is
+  `medium` from ALE-24, measured rather than chosen: against `high` it clears M3's "p50 after GO
+  under 10 s" with margin, cuts the p95 tail 2.9×, saves 28% a turn, and the game master still does
+  as much. `GM_EFFORT` overrides it; the numbers are in `config.py`.
 - requests stream, and `max_tokens` is the streaming ceiling;
 - no assistant prefill — it returns a 400;
 - no `strict: true` on tools — see "Tools" above.
