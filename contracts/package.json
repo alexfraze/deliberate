@@ -1,0 +1,9 @@
+{
+  "name": "@deliberate/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./gm-tools.json": "./gm-tools.json"
+  }
+}

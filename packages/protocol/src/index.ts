@@ -294,6 +294,32 @@ export interface FacingChanged {
   facing: Direction8;
 }
 
+/**
+ * One entity's feeling toward another moved. Absolute like every other diff: `value` is where the
+ * number landed after clamping to [-100, 100], not the delta that was asked for. `reason` is the
+ * GM's one-line justification, carried so the verified ledger can quote why the world changed.
+ * Added in ALE-31: `set_disposition` mutates state, so it needs a diff or `apply(snapshot, diffs)`
+ * stops reproducing the engine.
+ */
+export interface DispositionChanged {
+  type: 'DispositionChanged';
+  entity: EntityId;
+  toward: EntityId;
+  /** Disposition after the change, in [-100, 100]. */
+  value: number;
+  reason: string;
+}
+
+/**
+ * A quest moved to a later step. Absolute: `step` is the index the quest is on now. Added in
+ * ALE-31 for the same reason as `DispositionChanged`.
+ */
+export interface QuestAdvanced {
+  type: 'QuestAdvanced';
+  quest: QuestId;
+  step: number;
+}
+
 export type Diff =
   | EntityMoved
   | DamageApplied
@@ -303,7 +329,9 @@ export type Diff =
   | EntitySpawned
   | TurnAdvanced
   | EconomySpent
-  | FacingChanged;
+  | FacingChanged
+  | DispositionChanged
+  | QuestAdvanced;
 
 export type DiffType = Diff['type'];
 
@@ -317,6 +345,8 @@ export const DIFF_TYPES: readonly DiffType[] = [
   'TurnAdvanced',
   'EconomySpent',
   'FacingChanged',
+  'DispositionChanged',
+  'QuestAdvanced',
 ] as const;
 
 // ---------------------------------------------------------------------------------------------
@@ -342,8 +372,85 @@ export interface EndTurnIntent {
   entity: EntityId;
 }
 
-/** M0 intents. M1 adds `say` and free text (quoted as data, never as instruction). */
-export type Intent = MoveIntent | AttackIntent | EndTurnIntent;
+/**
+ * Cast an attack cantrip. Resolves through the same validated pipeline as a weapon attack —
+ * range, line of sight, action economy, a seeded attack roll — with the spell in place of the
+ * weapon. Added in ALE-31 for the GM's `cast` tool.
+ */
+export interface CastIntent {
+  kind: 'cast';
+  caster: EntityId;
+  /** Spell key from the trimmed cantrip table. */
+  spell: string;
+  target: EntityId;
+}
+
+/**
+ * An entity speaks. The one intent that mutates nothing: it emits a `DialogueLine` and leaves the
+ * state hash exactly where it was. It is still validated (an unknown or dead speaker is
+ * rejected), because the GM must not be able to put words in a corpse's mouth. Added in ALE-31.
+ */
+export interface SayIntent {
+  kind: 'say';
+  speaker: EntityId;
+  text: string;
+  /** Who is addressed; `null` speaks to the room. */
+  to: EntityId | null;
+}
+
+/** Move `entity`'s disposition toward another by `delta`, clamped to [-100, 100]. ALE-31. */
+export interface SetDispositionIntent {
+  kind: 'set_disposition';
+  entity: EntityId;
+  toward: EntityId;
+  delta: number;
+  /** Why, in one short phrase. Travels with the diff into the verified ledger. */
+  reason: string;
+}
+
+/** Place a new entity built from a known template. ALE-31. */
+export interface SpawnIntent {
+  kind: 'spawn';
+  /** Key into the template registry the engine was configured with (`EngineOptions.templates`). */
+  template: string;
+  at: Tile;
+  /** Map to place it on; `null` means the only loaded map. */
+  map: MapId | null;
+  /** Id for the new entity; `null` derives a unique one from the template key. */
+  id: EntityId | null;
+}
+
+/** Set a world flag. ALE-31. */
+export interface SetFlagIntent {
+  kind: 'set_flag';
+  key: string;
+  value: FlagValue;
+}
+
+/** Move a quest strictly forward to `step`. ALE-31. */
+export interface AdvanceQuestIntent {
+  kind: 'advance_quest';
+  quest: QuestId;
+  step: number;
+}
+
+/**
+ * Everything the engine can be asked to do. M0 shipped `move`, `attack` and `end_turn`; ALE-31
+ * added the rest for the GM's mutation tools. The addition is additive: each new kind is a new
+ * member of the union, no existing member changed, and every GM mutation tool maps onto exactly
+ * one of these — a tool call is not a second way into the store, it is the same validated path
+ * the player's UI uses.
+ */
+export type Intent =
+  | MoveIntent
+  | AttackIntent
+  | EndTurnIntent
+  | CastIntent
+  | SayIntent
+  | SetDispositionIntent
+  | SpawnIntent
+  | SetFlagIntent
+  | AdvanceQuestIntent;
 
 export type IntentKind = Intent['kind'];
 
@@ -459,3 +566,9 @@ export interface RecordedTurn {
 }
 
 export type RecordingLine = RecordingHeader | RecordedTurn;
+
+// ---------------------------------------------------------------------------------------------
+// GM tool contract (ALE-31). Schemas live in contracts/gm-tools.json; see ./gm.ts.
+// ---------------------------------------------------------------------------------------------
+
+export * from './gm.js';

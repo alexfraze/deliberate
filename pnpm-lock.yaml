@@ -51,6 +51,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/protocol
 
+  contracts: {}
+
   packages/client:
     dependencies:
       '@deliberate/protocol':
@@ -76,7 +78,11 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
-  packages/protocol: {}
+  packages/protocol:
+    dependencies:
+      '@deliberate/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
 
   packages/server:
     dependencies:
