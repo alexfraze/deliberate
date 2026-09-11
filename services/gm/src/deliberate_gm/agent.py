@@ -18,7 +18,7 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from .config import Settings
-from .contracts import tool_names
+from .contracts import ToolContract
 from .engine_client import EngineClient
 from .llm import LLMClient, LLMRequest, LLMResult
 from .memory import blocks as memory_blocks
@@ -63,18 +63,19 @@ class GmAgent:
         *,
         llm: LLMClient,
         engine: EngineClient,
-        tools: list[dict[str, Any]],
+        contract: ToolContract,
         settings: Settings,
         local_tools: dict[str, LocalTool] | None = None,
     ) -> None:
         self._llm = llm
         self._engine = engine
-        self._tools = tools
+        self._contract = contract
+        self._tools = list(contract.tools)
         self._settings = settings
         #: Tools this service executes itself rather than forwarding to the engine (the
         #: sandboxed `python` tool). They still reach the world only through the engine.
         self._local_tools = local_tools or {}
-        self._tool_names = set(tool_names(tools))
+        self._tool_names = set(contract.names())
 
     # -- the turn -------------------------------------------------------------------------
 
@@ -168,8 +169,12 @@ class GmAgent:
                 continue
 
             started = time.monotonic()
+            nested_from = len(records)
             verdict = self._dispatch(request, call_id, name, tool_input, records)
             latency_ms = int((time.monotonic() - started) * 1000)
+            # The contract says what a tool is; the engine's `kind` is the fallback for
+            # tools the contract does not cover, such as this service's own `python`.
+            kind = self._contract.kind_of(name) or verdict.kind
 
             results.append(
                 _tool_result(call_id, _verdict_payload(verdict), is_error=not verdict.ok)
@@ -180,14 +185,20 @@ class GmAgent:
                     tool=name,
                     input=tool_input,
                     ok=verdict.ok,
-                    kind=verdict.kind,
+                    kind=kind,
                     reason=verdict.reason,
                     diff=verdict.diff,
                     result=verdict.result,
                     latency_ms=latency_ms,
                 )
             )
-            if not verdict.ok:
+            # A rejected query is information. A rejected mutation invalidates the plan the
+            # rest of the batch was built on, so the batch stops there -- including when the
+            # rejection happened inside a local tool's nested engine call.
+            rejected_nested = any(
+                not record.ok and record.kind == "mutation" for record in records[nested_from:-1]
+            )
+            if (not verdict.ok and self._contract.is_mutation(name)) or rejected_nested:
                 stopped = True
 
         return results, records

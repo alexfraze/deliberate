@@ -103,6 +103,18 @@ both languages). This service never defines a schema, so the two languages canno
 does force `strict: true`, `additionalProperties: false` and `required` on every tool, which
 is what makes tool arguments schema-valid.
 
+Each entry carries a `kind` of `"query"` or `"mutation"`, and `load_contract` keeps it. The
+loop needs the distinction: a mutation's `tool_result` is an engine verdict, and a rejected
+one invalidates the plan the rest of the batch was built on, so the batch stops there. A
+rejected query is just information and the batch continues. Anything the contract does not
+classify — an unknown tool, a local tool that failed — counts as a mutation, because guessing
+wrong that way costs a halted batch while guessing wrong the other way would let a rejected
+change go unnoticed.
+
+Tool entries reaching the Anthropic `tools` parameter are rebuilt from scratch rather than
+copied and pruned, so `kind` and any other contract-only field can never reach the API, where
+an unexpected key is a 400.
+
 One tool is the service's own and is not in the contract: `python`, a sandboxed snippet
 runner for reasoning about the board in code. Its one escape hatch is `gm_tool(name, **args)`,
 which goes to the same `/gm/tool` door and gets the same validation. It is the third wall,

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from deliberate_gm.config import Settings
-from deliberate_gm.contracts import load_tools
+from deliberate_gm.contracts import ToolContract, load_contract
 from deliberate_gm.llm import LLMResult
 from deliberate_gm.models import TurnRequest
 from deliberate_gm.stub_engine import StubEngine
@@ -26,8 +26,8 @@ def settings() -> Settings:
 
 
 @pytest.fixture
-def tools() -> list[dict[str, Any]]:
-    return load_tools(FIXTURE_TOOLS)
+def contract() -> ToolContract:
+    return load_contract(FIXTURE_TOOLS)
 
 
 @pytest.fixture
