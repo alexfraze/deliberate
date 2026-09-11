@@ -8,8 +8,10 @@ import {
   inBounds,
   isWalkable,
   isoCameraFrame,
+  projectedHalfExtents,
   sameTile,
   tileDistance,
+  visualTopY,
   tileToWorld,
   worldToTile,
 } from './grid.js';
@@ -32,6 +34,15 @@ describe('cell lookup', () => {
     expect(inBounds(map, { x: 1.5, y: 0 })).toBe(false);
     expect(cellAt(map, { x: -1, y: 0 })).toBeUndefined();
     expect(isWalkable(map, { x: 99, y: 99 })).toBe(false);
+  });
+});
+
+describe('visualTopY', () => {
+  it('stands unwalkable cells proud so they read as walls', () => {
+    expect(visualTopY(map, { x: 2, y: 2 })).toBeCloseTo(0);
+    expect(visualTopY(map, { x: 0, y: 0 })).toBeGreaterThan(0);
+    expect(visualTopY(map, { x: 10, y: 2 })).toBeCloseTo(2 * ELEVATION_STEP);
+    expect(visualTopY(map, { x: -1, y: -1 })).toBe(0);
   });
 });
 
@@ -71,13 +82,20 @@ describe('tile <-> world', () => {
 });
 
 describe('isoCameraFrame', () => {
-  it('fits the map and widens with the viewport', () => {
-    const wide = isoCameraFrame(map, 2);
-    const tall = isoCameraFrame(map, 0.5);
-    expect(wide.halfWidth / wide.halfHeight).toBeCloseTo(2);
-    expect(tall.halfWidth / tall.halfHeight).toBeCloseTo(0.5);
-    expect(wide.halfHeight).toBeGreaterThan(map.height / 2);
-    expect(tall.halfWidth).toBeGreaterThan(map.width / 2);
+  it('fits the whole map at any aspect ratio', () => {
+    const extents = projectedHalfExtents(map);
+    for (const aspect of [0.5, 1, 1.286, 2, 3]) {
+      const frame = isoCameraFrame(map, aspect);
+      expect(frame.halfWidth).toBeGreaterThanOrEqual(extents.u - 1e-9);
+      expect(frame.halfHeight).toBeGreaterThanOrEqual(extents.v - 1e-9);
+      expect(frame.halfWidth / frame.halfHeight).toBeCloseTo(aspect);
+    }
+  });
+
+  it('does not waste the viewport on the diamond a square map projects to', () => {
+    const extents = projectedHalfExtents(map);
+    // The map's bounding circle would be the lazy fit; the real projection is much shorter.
+    expect(extents.v).toBeLessThan(extents.u);
   });
 
   it('looks at the origin from above, equally from east and south', () => {
@@ -99,6 +117,14 @@ describe('isoCameraFrame', () => {
     const frame = isoCameraFrame(map, 0);
     expect(Number.isFinite(frame.halfWidth)).toBe(true);
     expect(Number.isFinite(frame.halfHeight)).toBe(true);
+  });
+
+  it('grows the frame for a taller map', () => {
+    const tall = parseMapRows(
+      'tall',
+      Array.from({ length: 24 }, () => '.'.repeat(24)),
+    );
+    expect(projectedHalfExtents(tall).u).toBeGreaterThan(projectedHalfExtents(map).u);
   });
 });
 

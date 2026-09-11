@@ -16,6 +16,9 @@ export const ELEVATION_STEP = 0.35;
 /** How thick the slab under an elevation-0 tile is drawn. */
 export const TILE_THICKNESS = 0.25;
 
+/** Unwalkable cells are drawn this much proud of their elevation so they read as walls. */
+export const WALL_HEIGHT = 0.5;
+
 export interface WorldPoint {
   x: number;
   y: number;
@@ -50,6 +53,16 @@ export function elevationAt(map: MapRecord, tile: Tile): number {
 /** Height of the walkable surface of a tile, in world units. */
 export function surfaceY(map: MapRecord, tile: Tile): number {
   return elevationAt(map, tile) * ELEVATION_STEP;
+}
+
+/**
+ * Height of the *drawn* top of a tile. Same as `surfaceY` for floor; unwalkable cells stand proud
+ * so a wall looks like a wall rather than a dark hole. Entities stand on `surfaceY`.
+ */
+export function visualTopY(map: MapRecord, tile: Tile): number {
+  const cell = cellAt(map, tile);
+  if (!cell) return 0;
+  return cell.elevation * ELEVATION_STEP + (cell.walkable ? 0 : WALL_HEIGHT);
 }
 
 /**
@@ -97,31 +110,76 @@ export interface CameraFrame {
   far: number;
 }
 
-/** Classic 3/4 isometric direction: equal parts east, up, and south-ish. */
+/** Classic 3/4 isometric direction: equal parts east, up, and south. */
 const ISO_DIRECTION: WorldPoint = { x: 1, y: 1, z: 1 };
 
+/** Margin, in tiles, kept between the map and the edge of the frustum. */
+const CAMERA_MARGIN = 1;
+
+function normalise(v: WorldPoint): WorldPoint {
+  const length = Math.hypot(v.x, v.y, v.z) || 1;
+  return { x: v.x / length, y: v.y / length, z: v.z / length };
+}
+
+function cross(a: WorldPoint, b: WorldPoint): WorldPoint {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+}
+
+function dot(a: WorldPoint, b: WorldPoint): number {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
 /**
- * An orthographic frame that fits the whole map with a margin. `zoom` > 1 moves in closer.
- * Bounds are derived from the map so a bigger map does not need new constants.
+ * Half-extents of the map as the isometric camera sees it, in its own screen plane. A square map
+ * projects to a diamond, so fitting its bounding circle would waste most of the viewport
+ * vertically; this measures the corners through the camera basis instead.
+ */
+export function projectedHalfExtents(map: MapRecord): { u: number; v: number } {
+  const direction = normalise(ISO_DIRECTION);
+  const right = normalise(cross(direction, { x: 0, y: 1, z: 0 }));
+  const up = cross(right, direction);
+  const halfW = (map.width / 2) * TILE_SIZE;
+  const halfH = (map.height / 2) * TILE_SIZE;
+  let topY = 0;
+  for (const cell of map.cells) topY = Math.max(topY, cell.elevation * ELEVATION_STEP);
+  let u = 0;
+  let v = 0;
+  for (const x of [-halfW, halfW]) {
+    for (const z of [-halfH, halfH]) {
+      for (const y of [-TILE_THICKNESS, topY]) {
+        const corner = { x, y, z };
+        u = Math.max(u, Math.abs(dot(corner, right)));
+        v = Math.max(v, Math.abs(dot(corner, up)));
+      }
+    }
+  }
+  return { u: u + CAMERA_MARGIN, v: v + CAMERA_MARGIN };
+}
+
+/**
+ * An orthographic frame that fits the whole map at this aspect ratio. `zoom` > 1 moves in closer.
+ * Everything is derived from the map, so a bigger map needs no new constants.
  */
 export function isoCameraFrame(map: MapRecord, aspect: number, zoom = 1): CameraFrame {
-  const span = Math.max(map.width, map.height) * TILE_SIZE;
-  const radius = (span * Math.SQRT2) / 2 + 2;
   const safeAspect = aspect > 0 && Number.isFinite(aspect) ? aspect : 1;
-  const half = radius / Math.max(zoom, 0.1);
-  const halfHeight = safeAspect >= 1 ? half : half / safeAspect;
-  const halfWidth = halfHeight * safeAspect;
+  const extents = projectedHalfExtents(map);
+  const halfWidth = Math.max(extents.u, extents.v * safeAspect) / Math.max(zoom, 0.1);
+  const span = Math.max(map.width, map.height) * TILE_SIZE;
   const distance = span * 2 + 10;
-  const length = Math.hypot(ISO_DIRECTION.x, ISO_DIRECTION.y, ISO_DIRECTION.z);
+  const direction = normalise(ISO_DIRECTION);
   return {
     position: {
-      x: (ISO_DIRECTION.x / length) * distance,
-      y: (ISO_DIRECTION.y / length) * distance,
-      z: (ISO_DIRECTION.z / length) * distance,
+      x: direction.x * distance,
+      y: direction.y * distance,
+      z: direction.z * distance,
     },
     target: { x: 0, y: 0, z: 0 },
     halfWidth,
-    halfHeight,
+    halfHeight: halfWidth / safeAspect,
     near: 0.1,
     far: distance * 4,
   };
