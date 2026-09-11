@@ -164,10 +164,18 @@ says). Anything it caught is reported in `TurnResponse.redactions` and belongs i
 recording.
 
 It detects quotation, not paraphrase; no string check could do better, and claiming otherwise
-would be worse than the check. The seed cases live in
-`services/gm/tests/fixtures/injection_bank.json` — instruction override, operator
-impersonation, tool-call markup in dialogue, fake engine verdicts, prompt-disclosure
-requests, fence escape. The tests iterate the file, so adding a case needs no new test.
+would be worse than the check.
+
+The cases live in **`contracts/injection-bank.json`** — 52 of them across nine families
+(instruction override, tool-call markup, fake verdicts, prompt disclosure, fence escape,
+sandbox escape, `say` exfiltration, obfuscation, resource), grown by ALE-36 from ALE-33's 16
+seeds. It sits in `contracts/` rather than under `tests/` because both languages read it, like
+`gm-tools.json`: `services/gm/tests/test_injection.py` runs every case against all three walls
+with a model that is hostile by construction, and the same file drives the `injection-bank`
+entry in the replay regression bank, where each case's `demands` is attempted against the real
+engine and must come back refused. The tests iterate the file, so adding a case needs no new
+test — but re-run `pnpm --filter @deliberate/server bank:write`, because the recording is
+derived from it. See `docs/regression-bank.md`.
 
 ### Memory
 

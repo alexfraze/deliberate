@@ -88,6 +88,21 @@
         "finalHash": "976e476a90f468fc2ec8efb76eb8d62e28b030a663c75f1ec9187c382eeec3d8467cba4426e0cf59db918a62204ec2466a0ce84966eb1be1f11a12445a4f291b",
         "objectiveTurn": 4
       }
+    },
+    {
+      "name": "injection-bank",
+      "file": "injection-bank.jsonl",
+      "source": "engine",
+      "description": "The injection bank (ALE-36) played against the real engine. Every adversarial text in `contracts/injection-bank.json` is spoken by the player, and the mutation that text was trying to cause is then attempted through the GM door by a game master that obeyed it. Every one comes back refused and the state hash never moves off the header — which is \"no unvalidated mutation\" stated as a replayable session rather than as a claim.",
+      "objective": {
+        "type": "FlagSet"
+      },
+      "expect": {
+        "turns": 104,
+        "rejected": 52,
+        "finalHash": "177c6812bfbf5359061539a096babb9dd82a7950a5b7e47b5645e09f52533197c7423dd8df6ba4e06d46d5d2387dab1f46f7ede07349f347d5c6ac90aee6efbc",
+        "objectiveTurn": null
+      }
     }
   ]
 }

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./gm-tools.json": "./gm-tools.json"
+    "./gm-tools.json": "./gm-tools.json",
+    "./injection-bank.json": "./injection-bank.json"
   }
 }

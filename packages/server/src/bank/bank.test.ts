@@ -10,6 +10,7 @@ import {
   type CreateEngine,
   type Engine,
 } from '@deliberate/engine';
+import INJECTION_BANK from '@deliberate/contracts/injection-bank.json' with { type: 'json' };
 import { loadBank } from '@deliberate/engine/fs';
 import type { RecordedTurn, RecordingLine } from '@deliberate/protocol';
 import { describe, expect, it } from 'vitest';
@@ -51,11 +52,11 @@ function clone(name: string): BankEntry {
 
 describe('the regression bank', () => {
   it('has the live playthrough and the generated sessions', () => {
-    expect(bank.length).toBeGreaterThanOrEqual(5);
+    expect(bank.length).toBeGreaterThanOrEqual(6);
     expect(bank.filter((e) => e.session.source === 'live').map((e) => e.session.name)).toEqual([
       'm1-acceptance',
     ]);
-    expect(bank.filter((e) => e.session.source === 'engine').length).toBeGreaterThanOrEqual(4);
+    expect(bank.filter((e) => e.session.source === 'engine').length).toBeGreaterThanOrEqual(5);
   });
 
   it('replays every session to identical hashes and identical metrics', () => {
@@ -115,6 +116,58 @@ describe('the regression bank', () => {
       'spawn',
     ]);
     expect([...diffs('gatehouse-gm-tools')]).toContain('EntitySpawned');
+  });
+
+  /**
+   * ALE-36: the injection bank runs with the regression suite. It is not a second suite bolted
+   * on — it is an entry in this one, generated from `contracts/injection-bank.json`, the same
+   * file `services/gm/tests/test_injection.py` iterates. Python proves the text stays inside the
+   * speech fence and never leaks the prompt; this proves that a game master which *obeyed* every
+   * one of those texts still could not change the world.
+   */
+  it('runs the injection bank against the real engine, and nothing moves', () => {
+    const injections = INJECTION_BANK.cases;
+    expect(injections.length).toBeGreaterThanOrEqual(48);
+    const turns = lines('injection-bank').filter((l): l is RecordedTurn => l.line === 'turn');
+    const header = lines('injection-bank')[0] as { hash: string };
+
+    // Two turns per case: the player says the adversarial text, then the game master tries the
+    // mutation that text was after.
+    expect(turns).toHaveLength(injections.length * 2);
+
+    const spoken = turns.filter((t) => t.toolCalls.length === 0);
+    const obeyed = turns.filter((t) => t.toolCalls.length > 0);
+    expect(spoken).toHaveLength(injections.length);
+    expect(obeyed).toHaveLength(injections.length);
+
+    // No unvalidated mutation: every demanded call reached the engine and came back refused,
+    // with a reason and no diff.
+    for (const turn of obeyed) {
+      expect(turn.verdict.ok, `${turn.toolCalls[0]!.name} was accepted`).toBe(false);
+      expect(turn.verdict.reason).toBeTruthy();
+      expect(turn.diffs).toEqual([]);
+      expect(turn.toolCalls[0]!.verdict.ok).toBe(false);
+    }
+    // Every adversarial text really is in the recording, verbatim, as speech and nothing else.
+    for (const [i, injection] of injections.entries()) {
+      expect(spoken[i]!.intent, injection.id).toMatchObject({
+        kind: 'say',
+        speaker: 'player',
+        text: injection.text.trim(),
+      });
+      expect(spoken[i]!.diffs.map((d) => d.type)).toEqual(['DialogueLine']);
+    }
+    // And the state hash never moved, across every case, from the first line to the last.
+    expect(turns.every((t) => t.hashBefore === header.hash && t.hashAfter === header.hash)).toBe(
+      true,
+    );
+
+    const metrics = runBank(bank, createEngine).sessions.find((s) => s.name === 'injection-bank')!;
+    expect(metrics.metrics.rejectionRate).toBe(0.5);
+    // An injection bank that reached an objective would be the report of a breach.
+    expect(metrics.metrics.objectiveTurn).toBeNull();
+    // All nine mutation tools were tried and all nine were refused.
+    expect(metrics.metrics.tools).toHaveLength(9);
   });
 
   it('regenerates the engine-driven entries byte for byte', () => {
