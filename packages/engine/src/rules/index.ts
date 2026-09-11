@@ -19,13 +19,18 @@ export {
   type KnownCondition,
 } from './conditions.js';
 export {
-  checkAttack,
-  checkEndTurn,
-  checkMove,
-  createEngine,
+  accept,
+  checkActor,
+  checkTurn,
+  describeTile,
+  isVerdict,
   occupiedTiles,
+  reject,
+  soleMap,
+  type Actor,
   type EngineContext,
-} from './create-engine.js';
+} from './context.js';
+export { checkAttack, checkEndTurn, checkMove, createEngine } from './create-engine.js';
 export {
   actsOnItsOwn,
   advanceTurn,
@@ -43,7 +48,9 @@ export {
   getWeapon,
   inRange,
   isRangedAttack,
+  WEAPON_ACTION,
   WEAPONS,
+  type AttackAction,
   type DiceExpr,
   type Weapon,
 } from './weapons.js';

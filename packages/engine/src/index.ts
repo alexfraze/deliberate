@@ -12,10 +12,12 @@
  *   src/rules/     ALE-9   SRD 5.1 trimmed rules, action economy, initiative, seeded RNG
  *   src/diffs/     ALE-10  diff emission and apply(snapshot, diffs)
  *   src/recorder/  ALE-30  JSONL recorder and replay
+ *   src/gm/        ALE-31  GM tool contract: query handlers and tool-call -> intent mapping
  */
 
 export type { CreateEngine, Engine, EngineOptions } from './engine.js';
 export * from './diffs/index.js';
+export * from './gm/index.js';
 export * from './grid/index.js';
 export * from './hash/index.js';
 export * from './recorder/index.js';

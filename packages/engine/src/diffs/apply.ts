@@ -99,6 +99,20 @@ function applyInto(state: Snapshot, diff: Diff): void {
     case 'FacingChanged':
       mustPosition(state, diff.entity).facing = diff.facing;
       return;
+    case 'DispositionChanged': {
+      const disposition = mustEntity(state, diff.entity).components.disposition;
+      if (!disposition) {
+        throw new DiffError(`entity ${diff.entity} has no disposition component`);
+      }
+      disposition.toward[diff.toward] = diff.value;
+      return;
+    }
+    case 'QuestAdvanced': {
+      const quest = state.world.quests[diff.quest];
+      if (!quest) throw new DiffError(`diff refers to unknown quest ${diff.quest}`);
+      quest.step = diff.step;
+      return;
+    }
     default:
       throw new DiffError(`unknown diff type ${String((diff as Diff).type)}`);
   }

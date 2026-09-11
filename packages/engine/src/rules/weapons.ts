@@ -11,8 +11,12 @@ export interface DiceExpr {
 export interface Weapon {
   key: string;
   name: string;
-  /** `finesse` picks the better of STR and DEX. */
-  ability: 'str' | 'dex' | 'finesse';
+  /**
+   * Which ability powers the attack. `finesse` picks the better of STR and DEX. Widened to all
+   * six abilities in ALE-31 so an attack cantrip (INT, WIS or CHA) resolves through this same
+   * record instead of needing a parallel spell pipeline.
+   */
+  ability: Ability | 'finesse';
   damage: DiceExpr;
   /** Melee reach in feet (5 for everything in the trimmed table). */
   reachFt?: number;
@@ -22,6 +26,24 @@ export interface Weapon {
   light?: boolean;
   /** Free: the inventory does not need to hold it. */
   natural?: boolean;
+  /** SRD 5.1 cantrips add no ability modifier to damage, unlike weapons. ALE-31. */
+  noAbilityDamage?: boolean;
+}
+
+/**
+ * How an attack-shaped action names itself (ALE-31). `attack` and `cast` resolve through the one
+ * pipeline — range, line of sight, action economy, a single seeded roll — and differ only in
+ * which table the key is looked up in and what the rejections call it. Keeping the difference to
+ * this record is what stops `cast` becoming a second, unvalidated way to deal damage.
+ */
+export interface AttackAction {
+  /** Fills "<name> is dead and cannot ___". */
+  verb: string;
+  lookup(key: string): Weapon | undefined;
+  /** Rejection when the key is in no table at all. */
+  unknown(actor: string, key: string): string;
+  /** Rejection when the actor does not carry (or know) it. */
+  missing(actor: string, name: string): string;
 }
 
 /**
@@ -122,3 +144,11 @@ export function inRange(weapon: Weapon, distanceFt: number): boolean {
 export function isRangedAttack(weapon: Weapon, distanceFt: number): boolean {
   return distanceFt > (weapon.reachFt ?? 0) && weapon.rangeFt !== undefined;
 }
+
+/** Weapon attacks: the SRD table above, carried in the inventory. */
+export const WEAPON_ACTION: AttackAction = {
+  verb: 'attack',
+  lookup: getWeapon,
+  unknown: (actor, key) => `${actor} does not know how to attack with ${key}.`,
+  missing: (actor, name) => `${actor} does not have a ${name}.`,
+};

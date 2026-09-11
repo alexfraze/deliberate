@@ -1,13 +1,12 @@
 import {
   TILE_FEET,
   type AttackIntent,
+  type CastIntent,
   type Diff,
   type EndTurnIntent,
-  type Entity,
   type EntityId,
   type InitiativeState,
   type Intent,
-  type MapRecord,
   type MoveIntent,
   type Snapshot,
   type Tile,
@@ -15,6 +14,8 @@ import {
 } from '@deliberate/protocol';
 
 import type { Engine, EngineOptions } from '../engine.js';
+import { applyWorldIntent } from '../gm/intents.js';
+import { SPELL_ACTION } from '../gm/spells.js';
 import {
   directionTo,
   distanceFeet,
@@ -29,9 +30,20 @@ import { hashSnapshot } from '../hash/index.js';
 import { createStore, type Store } from '../store/index.js';
 import { applyDamage, resolveAttack, type AttackResult } from './attack.js';
 import { hasCondition, isAlive, isIncapacitated } from './conditions.js';
+import {
+  accept,
+  checkActor,
+  checkTurn,
+  describeTile,
+  isVerdict,
+  occupiedTiles,
+  reject,
+  type Actor,
+  type EngineContext,
+} from './context.js';
 import { advanceTurn, economyOf, freshEconomy, rollInitiative } from './initiative.js';
-import { createRng, type Rng } from './rng.js';
-import { getWeapon, inRange, type Weapon } from './weapons.js';
+import { createRng } from './rng.js';
+import { inRange, WEAPON_ACTION, type AttackAction, type Weapon } from './weapons.js';
 
 /**
  * The engine: a store, a seeded RNG, and `apply`, which validates an intent completely before
@@ -48,7 +60,7 @@ import { getWeapon, inRange, type Weapon } from './weapons.js';
 export function createEngine(initial: Snapshot, options: EngineOptions): Engine {
   const store = createStore(initial);
   const rng = createRng(options.seed);
-  const ctx: EngineContext = { store, rng };
+  const ctx: EngineContext = { store, rng, templates: options.templates ?? {} };
 
   return {
     snapshot: () => store.snapshot(),
@@ -61,82 +73,19 @@ export function createEngine(initial: Snapshot, options: EngineOptions): Engine 
           return applyAttack(ctx, intent);
         case 'end_turn':
           return applyEndTurn(ctx, intent);
+        case 'cast':
+          return applyCast(ctx, intent);
+        case 'say':
+        case 'set_disposition':
+        case 'spawn':
+        case 'set_flag':
+        case 'advance_quest':
+          return applyWorldIntent(ctx, intent);
         default:
           return reject(`Unknown intent ${String((intent as Intent).kind)}.`);
       }
     },
   };
-}
-
-export interface EngineContext {
-  store: Store;
-  rng: Rng;
-}
-
-export function reject(reason: string): Verdict {
-  return { ok: false, reason, diff: [] };
-}
-
-export function accept(diff: Diff[]): Verdict {
-  return { ok: true, diff };
-}
-
-/** Tiles occupied by entities on `map` (dead ones included; a body still fills a square). */
-export function occupiedTiles(store: Store, map: string, except?: EntityId): Set<string> {
-  const out = new Set<string>();
-  for (const id of store.entityIds()) {
-    if (id === except) continue;
-    const pos = store.getComponent(id, 'position');
-    if (pos && pos.map === map) out.add(tileKey(pos));
-  }
-  return out;
-}
-
-export function describeTile(t: Tile): string {
-  return `(${t.x}, ${t.y})`;
-}
-
-function isVerdict(v: unknown): v is Verdict {
-  return typeof v === 'object' && v !== null && 'ok' in v;
-}
-
-// ---------------------------------------------------------------------------------------------
-// Shared checks
-// ---------------------------------------------------------------------------------------------
-
-interface Actor {
-  entity: Entity;
-  position: NonNullable<Entity['components']['position']>;
-  stats: NonNullable<Entity['components']['stats']>;
-  health: NonNullable<Entity['components']['health']>;
-  map: MapRecord;
-}
-
-/** An entity that can act: exists, is on a known map, has stats and hit points, is not down. */
-function checkActor(store: Store, id: EntityId, verb: string): Actor | Verdict {
-  const entity = store.getEntity(id);
-  if (!entity) return reject(`There is no one called ${id} here.`);
-  const { position, health, stats } = entity.components;
-  if (!position) return reject(`${entity.name} is not on the map.`);
-  if (!health) return reject(`${entity.name} has no hit points and cannot act.`);
-  if (!isAlive(health)) return reject(`${entity.name} is dead and cannot ${verb}.`);
-  if (isIncapacitated(health)) return reject(`${entity.name} is unconscious and cannot ${verb}.`);
-  if (!stats) return reject(`${entity.name} has no stats and cannot ${verb}.`);
-  const map = store.getMap(position.map);
-  if (!map) return reject(`${entity.name} is on an unknown map.`);
-  return { entity, position, stats, health, map };
-}
-
-/** In an encounter, only the current entity acts. Outside one, `null`. */
-function checkTurn(store: Store, actor: Actor): InitiativeState | null | Verdict {
-  const init = store.initiative();
-  if (!init) return null;
-  const current = init.order[init.current];
-  if (current !== actor.entity.id) {
-    const name = current ? (store.getEntity(current)?.name ?? current) : 'nobody';
-    return reject(`It is ${name}'s turn, not ${actor.entity.name}'s.`);
-  }
-  return init;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -218,19 +167,26 @@ interface AttackCheck {
   offhand: boolean;
 }
 
-/** Validate an attack completely. Reads only; never mutates and never rolls. */
-export function checkAttack(store: Store, intent: AttackIntent): AttackCheck | Verdict {
-  const actor = checkActor(store, intent.attacker, 'attack');
+/**
+ * Validate an attack completely. Reads only; never mutates and never rolls. `action` selects the
+ * table the ability key is looked up in: weapons by default, spells for a `cast` intent.
+ */
+export function checkAttack(
+  store: Store,
+  intent: AttackIntent,
+  action: AttackAction = WEAPON_ACTION,
+): AttackCheck | Verdict {
+  const actor = checkActor(store, intent.attacker, action.verb);
   if (isVerdict(actor)) return actor;
   const init = checkTurn(store, actor);
   if (isVerdict(init)) return init;
   const { entity, position, map } = actor;
 
-  const weapon = getWeapon(intent.ability);
-  if (!weapon) return reject(`${entity.name} does not know how to attack with ${intent.ability}.`);
+  const weapon = action.lookup(intent.ability);
+  if (!weapon) return reject(action.unknown(entity.name, intent.ability));
   if (!weapon.natural) {
     const held = entity.components.inventory?.items.some((i) => i.item === weapon.key && i.qty > 0);
-    if (!held) return reject(`${entity.name} does not have a ${weapon.name}.`);
+    if (!held) return reject(action.missing(entity.name, weapon.name));
   }
 
   if (intent.target === entity.id) return reject(`${entity.name} cannot attack themself.`);
@@ -303,8 +259,12 @@ function startEncounter(ctx: EngineContext, first: EntityId): InitiativeState {
   return init;
 }
 
-function applyAttack(ctx: EngineContext, intent: AttackIntent): Verdict {
-  const check = checkAttack(ctx.store, intent);
+function applyAttack(
+  ctx: EngineContext,
+  intent: AttackIntent,
+  action: AttackAction = WEAPON_ACTION,
+): Verdict {
+  const check = checkAttack(ctx.store, intent, action);
   if (isVerdict(check)) return check;
   const { actor, target, weapon, distanceFt, offhand } = check;
 
@@ -362,6 +322,25 @@ function applyAttack(ctx: EngineContext, intent: AttackIntent): Verdict {
     diffs.push({ type: 'FacingChanged', entity: actor.entity.id, facing });
   }
   return accept(diffs);
+}
+
+// ---------------------------------------------------------------------------------------------
+// cast — the attack pipeline with a spell in place of the weapon
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A spell attack is an attack: same range, line-of-sight, action-economy and roll path, with the
+ * key looked up in the cantrip table instead of the weapon table. Deliberately not a second
+ * implementation — `cast` must not be able to do anything `attack` could not.
+ */
+function applyCast(ctx: EngineContext, intent: CastIntent): Verdict {
+  const asAttack: AttackIntent = {
+    kind: 'attack',
+    attacker: intent.caster,
+    target: intent.target,
+    ability: intent.spell,
+  };
+  return applyAttack(ctx, asAttack, SPELL_ACTION);
 }
 
 // ---------------------------------------------------------------------------------------------
