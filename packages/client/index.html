@@ -69,6 +69,17 @@
         margin-top: 8px;
         color: #9fd0ff;
       }
+      /* The waiting indicator. Visible whether or not deliberate mode is open, because a turn
+         resolves — and NPCs act — on both paths. Empty text collapses it to nothing. */
+      #deliberate .dl-busy:not(:empty) {
+        margin-top: 8px;
+        padding: 4px 8px;
+        color: #ffd79a;
+        background: rgba(255, 215, 154, 0.08);
+        border-left: 2px solid #ffd79a;
+        border-radius: 3px;
+        font-variant-numeric: tabular-nums;
+      }
       #deliberate .dl-preview {
         margin-top: 6px;
         color: #c8cdd3;
@@ -96,6 +107,23 @@
         background: #33414f;
         color: #7d8b99;
         cursor: default;
+      }
+      /* Always visible: ending a turn is how initiative reaches the NPCs, and it is not part of
+         the deliberate/preview cycle, so it is not hidden with the rest of the panel. */
+      #deliberate #end-turn {
+        margin-top: 8px;
+        width: 100%;
+        padding: 6px 0;
+        font: inherit;
+        color: #c8cdd3;
+        background: transparent;
+        border: 1px solid #33414f;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      #deliberate #end-turn:hover {
+        border-color: #9fd0ff;
+        color: #e6e6e6;
       }
       #deliberate .dl-narration {
         margin-top: 10px;

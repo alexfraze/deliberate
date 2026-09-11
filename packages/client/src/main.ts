@@ -9,6 +9,7 @@ import {
   DEFAULT_ROOM,
   PROTOCOL_VERSION,
   type EntityId,
+  type Intent,
   type MapRecord,
   type ServerMessage,
   type Tile,
@@ -124,10 +125,15 @@ function onMessage(message: ServerMessage): void {
       hash = message.hash;
       queue.enqueue(message.diffs);
       hud.setError(null);
+      // The diffs ARE the outcome. Resolve may still be running NPC turns behind them, and each
+      // NPC turn sends its own diffs which refresh this deadline — but if nothing more arrives,
+      // the turn is simply over and the indicator must not keep claiming otherwise.
+      panel.busy('the world is acting', 6000);
       return;
     }
     case 'error': {
       hud.setError(message.reason);
+      panel.idle();
       panel.reset(message.reason);
       return;
     }
@@ -244,6 +250,7 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
       });
     } else {
       transport.send({ type: 'intent', room: DEFAULT_ROOM, turn, intent: result.intent });
+      panel.busy('resolving the turn', 15000);
     }
   }
 });
@@ -266,6 +273,23 @@ panel.onGo(() => {
 panel.onToggle(() => {
   panel.reset();
   hud.setError(null);
+});
+panel.onEndTurn(() => {
+  if (selected === null) {
+    hud.setHint('Select an entity first, then end its turn.');
+    return;
+  }
+  // Same path as any other intent: previewed in deliberate mode, committed otherwise. Whether
+  // this entity may end its turn is the engine's call, and its reason lands in the HUD.
+  const intent: Intent = { kind: 'end_turn', entity: selected };
+  hud.setError(null);
+  if (panel.isOn()) {
+    panel.stage(intent);
+    transport.send({ type: 'preview_request', room: DEFAULT_ROOM, turn, intent });
+  } else {
+    transport.send({ type: 'intent', room: DEFAULT_ROOM, turn, intent });
+    panel.busy('resolving the turn', 15000);
+  }
 });
 
 window.addEventListener('beforeunload', () => transport.close());
