@@ -8,11 +8,16 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./fs": {
+      "types": "./src/recorder/fs-sink.ts",
+      "default": "./src/recorder/fs-sink.ts"
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
+    "replay": "node dist/recorder/cli.js replay",
     "test": "vitest run"
   },
   "dependencies": {

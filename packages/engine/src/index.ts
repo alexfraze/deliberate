@@ -18,6 +18,7 @@ export type { CreateEngine, Engine, EngineOptions } from './engine.js';
 export * from './diffs/index.js';
 export * from './grid/index.js';
 export * from './hash/index.js';
+export * from './recorder/index.js';
 export * from './rules/index.js';
 export * from './store/index.js';
 
