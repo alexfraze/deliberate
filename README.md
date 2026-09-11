@@ -32,8 +32,18 @@ pnpm replay <file>  # Re-run a recorded session and check every state hash
 
 Playing locally: `pnpm dev:server` in one terminal, `pnpm dev:client` in another, then open
 http://127.0.0.1:5173. Click an entity to select it, a tile to move, another entity to attack.
+Tick **deliberate mode** to play the M1 loop instead: a click previews the action and the game
+master telegraphs what the NPCs would do, and nothing happens until you press GO. Previewing again
+replaces the last preview, so changing your mind costs nothing.
+
 The server records the session to `recordings/<timestamp>.jsonl`; `pnpm replay` that file to
 check it re-runs to identical hashes.
+
+Server environment: `PORT`, `HOST`, `RECORDINGS_DIR` (empty to record nothing),
+`DELIBERATE_SCENE` (`gatehouse`, the default, or `fixture` for the M0 training yard), and
+`GM_SERVICE_URL` — the Python game master (`services/gm`, see [docs/gm-service.md](docs/gm-service.md)).
+Without `GM_SERVICE_URL` there is no model in the loop: preview shows the engine's own resolution
+of the staged action and GO commits it.
 
 Requires Node 22 and pnpm 10 (`corepack enable`).
 
