@@ -1,0 +1,37 @@
+{
+  "mapId": "m1-gatehouse",
+  "seed": "m1-gatehouse-seed",
+  "name": "The gatehouse yard",
+  "rows": [
+    "##############",
+    "#............#",
+    "#............#",
+    "#............#",
+    "######.#######",
+    "#............#",
+    "#............#",
+    "#..#.....#...#",
+    "#..#.....#...#",
+    "#............#",
+    "#............#",
+    "##############"
+  ],
+  "door": { "x": 6, "y": 4 },
+  "player": { "x": 2, "y": 9, "facing": "N" },
+  "flags": {
+    "gatehouse.gate.sealed": true,
+    "gatehouse.watchword.burned": false
+  },
+  "quests": {
+    "carry-the-scout": {
+      "id": "carry-the-scout",
+      "title": "Carry the scout",
+      "steps": [
+        "Find out who cut Brannoc open",
+        "Get Brannoc through the gate",
+        "Tell the garrison the watchword is burned"
+      ],
+      "step": 0
+    }
+  }
+}

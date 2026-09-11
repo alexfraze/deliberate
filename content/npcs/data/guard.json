@@ -1,0 +1,80 @@
+{
+  "id": "gate-guard-halloran",
+  "archetype": "guard",
+  "name": "Halloran, Gate Warden",
+  "placement": { "x": 6, "y": 4, "facing": "S" },
+  "stats": {
+    "str": 13,
+    "dex": 12,
+    "con": 12,
+    "int": 10,
+    "wis": 11,
+    "cha": 10,
+    "ac": 16,
+    "speed": 30,
+    "proficiency": 2
+  },
+  "health": { "hp": 11, "maxHp": 11, "conditions": [] },
+  "inventory": {
+    "items": [
+      { "item": "longsword", "qty": 1 },
+      { "item": "handaxe", "qty": 1 },
+      { "item": "gate-seal", "qty": 1 }
+    ]
+  },
+  "faction": { "id": "garrison" },
+  "disposition": {
+    "toward": { "player": 0, "merchant-ilva": 15, "scout-brannoc": 40 }
+  },
+  "brain": { "policy": "gm" },
+  "portrait": { "asset": "portraits/npc/gate-guard.placeholder.png" },
+  "goals": [
+    {
+      "text": "Stand on the gate tile (6, 4) and let nobody through while gatehouse.gate.sealed is true.",
+      "refs": ["gate-guard-halloran"],
+      "flag": "gatehouse.gate.sealed"
+    },
+    {
+      "text": "Do not strike player first; answer a drawn weapon in kind.",
+      "refs": ["player"]
+    },
+    {
+      "text": "Get scout-brannoc off the yard and to a healer once someone vouches for him.",
+      "refs": ["scout-brannoc"],
+      "quest": "carry-the-scout"
+    }
+  ],
+  "dialogue": [
+    {
+      "text": "Gate's sealed. Turn around.",
+      "toward": "player",
+      "minDisposition": -100,
+      "tags": ["block", "greeting"]
+    },
+    {
+      "text": "Put it away. I will not ask twice.",
+      "toward": "player",
+      "minDisposition": -100,
+      "maxDisposition": -20,
+      "tags": ["threat", "provoked"]
+    },
+    {
+      "text": "State your business, and be quick about it.",
+      "toward": "player",
+      "minDisposition": 0,
+      "tags": ["block", "question"]
+    },
+    {
+      "text": "Ilva vouches for you, so I will hear it. The gate still does not open.",
+      "toward": "player",
+      "minDisposition": 25,
+      "tags": ["block", "warm"]
+    },
+    {
+      "text": "Watch-captain's orders bind me, not my eyes. Say the word and I look east a while.",
+      "toward": "player",
+      "minDisposition": 60,
+      "tags": ["offer", "trusted"]
+    }
+  ]
+}
