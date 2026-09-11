@@ -258,6 +258,7 @@ function frozenEngine(snapshot: Snapshot): Engine & { applied: Intent[] } {
     applied,
     snapshot: () => structuredClone(snapshot),
     hash: () => 'frozen',
+    rngCalls: () => 0,
     apply(intent) {
       applied.push(intent);
       return { ok: true, diff: [] };

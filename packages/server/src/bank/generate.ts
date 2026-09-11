@@ -247,6 +247,7 @@ export function generateSession(scenario: Scenario): GeneratedSession {
   const gmEngine = (call: GmToolCall): Engine => ({
     snapshot: () => engine.snapshot(),
     hash: () => engine.hash(),
+    rngCalls: () => engine.rngCalls(),
     apply: (intent) => {
       const hashBefore = engine.hash();
       const verdict = engine.apply(intent);

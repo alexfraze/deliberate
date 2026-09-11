@@ -141,6 +141,7 @@ describe('a deliberately broken bank', () => {
       return {
         snapshot: () => real.snapshot(),
         hash: () => real.hash(),
+        rngCalls: () => real.rngCalls(),
         apply: (intent) => {
           calls += 1;
           return calls === 4
