@@ -55,14 +55,22 @@ describe('gm tool contract', () => {
       ...GM_QUERY_TOOL_NAMES,
       ...GM_MUTATION_TOOL_NAMES,
     ]);
-    expect(GM_QUERY_TOOLS.map((t) => t.name)).toEqual([...GM_QUERY_TOOL_NAMES]);
-    expect(GM_MUTATION_TOOLS.map((t) => t.name)).toEqual([...GM_MUTATION_TOOL_NAMES]);
     expect(GM_TOOLS).toHaveLength(15);
   });
 
-  it('carries exactly the three keys the Anthropic tools parameter takes', () => {
+  it('declares kind on every entry, so neither language keeps its own list', () => {
+    // The point of `kind`: the free-vs-validated split lives in the file. These assertions are
+    // what stops a tool being added to the JSON without an engine handler, or vice versa.
     for (const tool of GM_TOOLS) {
-      expect(Object.keys(tool).sort()).toEqual(['description', 'input_schema', 'name']);
+      expect(['query', 'mutation'], tool.name).toContain(tool.kind);
+    }
+    expect(GM_QUERY_TOOLS.map((t) => t.name)).toEqual([...GM_QUERY_TOOL_NAMES]);
+    expect(GM_MUTATION_TOOLS.map((t) => t.name)).toEqual([...GM_MUTATION_TOOL_NAMES]);
+  });
+
+  it('carries only the keys a loader needs: the three Anthropic ones plus kind', () => {
+    for (const tool of GM_TOOLS) {
+      expect(Object.keys(tool).sort()).toEqual(['description', 'input_schema', 'kind', 'name']);
       expect(tool.description.length).toBeGreaterThan(20);
     }
   });

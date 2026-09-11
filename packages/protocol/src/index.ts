@@ -610,9 +610,18 @@ export interface JsonSchema {
   maxLength?: number;
 }
 
-/** One entry of the Anthropic `tools` array. Exactly these three keys; nothing to strip. */
+/**
+ * One entry of the contract. `name`, `description` and `input_schema` are the three keys the
+ * Anthropic `tools` parameter takes; `kind` is contract metadata that loaders drop when building
+ * that parameter.
+ *
+ * `kind` is the free-vs-validated distinction, and it lives in the file so that neither language
+ * has to keep a hardcoded list of which tools mutate. Adding a tool is then a one-file change.
+ */
 export interface GmToolDefinition {
   name: string;
+  /** `query`: free, read-only, never consumes the RNG. `mutation`: maps onto exactly one Intent. */
+  kind: 'query' | 'mutation';
   description: string;
   input_schema: JsonSchema;
 }
@@ -647,14 +656,6 @@ export type GmQueryToolName = (typeof GM_QUERY_TOOL_NAMES)[number];
 export type GmMutationToolName = (typeof GM_MUTATION_TOOL_NAMES)[number];
 export type GmToolName = GmQueryToolName | GmMutationToolName;
 
-export function isGmQueryTool(name: string): name is GmQueryToolName {
-  return (GM_QUERY_TOOL_NAMES as readonly string[]).includes(name);
-}
-
-export function isGmMutationTool(name: string): name is GmMutationToolName {
-  return (GM_MUTATION_TOOL_NAMES as readonly string[]).includes(name);
-}
-
 /**
  * The parsed contract. The cast is the one place the JSON meets the type system; `gm.test.ts`
  * asserts the file really has this shape and that its names match the tuples above, so the cast
@@ -667,18 +668,34 @@ const contract = gmToolContract as unknown as {
 
 export const GM_CONTRACT_VERSION: number = contract.version;
 
-/** Every tool in file order — queries first, then mutations. This is the array the model sees. */
+/**
+ * Every tool in file order — queries first, then mutations. This is the array the model sees, and
+ * the order is the head of the cached prompt prefix, so it must stay stable.
+ */
 export const GM_TOOLS: readonly GmToolDefinition[] = contract.tools;
 
-export const GM_QUERY_TOOLS: readonly GmToolDefinition[] = GM_TOOLS.filter((t) =>
-  isGmQueryTool(t.name),
+export const GM_QUERY_TOOLS: readonly GmToolDefinition[] = GM_TOOLS.filter(
+  (t) => t.kind === 'query',
 );
-export const GM_MUTATION_TOOLS: readonly GmToolDefinition[] = GM_TOOLS.filter((t) =>
-  isGmMutationTool(t.name),
+export const GM_MUTATION_TOOLS: readonly GmToolDefinition[] = GM_TOOLS.filter(
+  (t) => t.kind === 'mutation',
 );
 
 export function gmTool(name: string): GmToolDefinition | undefined {
   return GM_TOOLS.find((t) => t.name === name);
+}
+
+/**
+ * Both guards answer from the contract's own `kind`, never from a list kept alongside it. The
+ * name tuples above exist for the literal types; `gm.test.ts` asserts they still agree with the
+ * file, so a tool added to the JSON alone fails the build rather than going quietly unhandled.
+ */
+export function isGmQueryTool(name: string): name is GmQueryToolName {
+  return gmTool(name)?.kind === 'query';
+}
+
+export function isGmMutationTool(name: string): name is GmMutationToolName {
+  return gmTool(name)?.kind === 'mutation';
 }
 
 // ---------------------------------------------------------------------------------------------

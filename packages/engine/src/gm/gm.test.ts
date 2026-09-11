@@ -67,6 +67,19 @@ describe('GM tool executor', () => {
     expect(engine.hash()).toBe(before);
   });
 
+  it("the contract's mutation kinds are exactly the tools that map to intents", () => {
+    // Self-checking in both directions: a `kind: "mutation"` entry with no intent mapping, or an
+    // intent mapping for something the file calls a query, fails here.
+    const declared = GM_TOOLS.filter((t) => t.kind === 'mutation')
+      .map((t) => t.name)
+      .sort();
+    const mapped = GM_TOOLS.filter((t) => toIntent(t.name, {}) !== null)
+      .map((t) => t.name)
+      .sort();
+    expect(mapped).toEqual(declared);
+    expect(declared).toEqual([...GM_MUTATION_TOOL_NAMES].sort());
+  });
+
   it('maps each mutation tool onto exactly one intent kind', () => {
     const kinds = new Set<Intent['kind']>();
     const args: Record<string, Record<string, unknown>> = {
@@ -246,10 +259,16 @@ describe('roll_preview does not disturb the seeded RNG', () => {
    * and these tests pin that behaviour from the outside: the observable roll sequence has to be
    * byte-identical whether or not previews were taken.
    */
-  function fight(engine: Engine, previewBetween: boolean): { hashes: string[]; damage: number[] } {
+  function fight(
+    engine: Engine,
+    previewBetween: boolean,
+  ): { hashes: string[]; damage: number[]; rolls: string[] } {
     walkTo(engine, PLAYER, { x: 7, y: 3 });
     const hashes: string[] = [];
     const damage: number[] = [];
+    // Every diff of every swing, verbatim: hit or miss, the amount, the initiative order the
+    // opening roll produced. This is the observable image of the RNG stream.
+    const rolls: string[] = [];
     for (let i = 0; i < 6; i++) {
       if (previewBetween) {
         // Ask for odds repeatedly, from several angles, before every single swing.
@@ -268,21 +287,29 @@ describe('roll_preview does not disturb the seeded RNG', () => {
         engine,
         call('attack', { attacker: PLAYER, target: DUMMY_A, ability: 'longsword' }),
       );
+      rolls.push(JSON.stringify(result.diff));
       for (const diff of result.diff) {
         if (diff.type === 'DamageApplied') damage.push(diff.amount);
       }
-      executeGmTool(engine, call('end_turn', { entity_id: PLAYER }));
+      const ended = executeGmTool(engine, call('end_turn', { entity_id: PLAYER }));
+      rolls.push(JSON.stringify(ended.diff));
       hashes.push(engine.hash());
     }
-    return { hashes, damage };
+    return { hashes, damage, rolls };
   }
 
-  it('leaves the state hash and every later roll identical', () => {
+  it('leaves the state hash AND the whole subsequent roll sequence identical', () => {
     const clean = fight(engineWith(), false);
     const previewed = fight(engineWith(), true);
-    expect(previewed.hashes).toEqual(clean.hashes);
+    // The hash alone would pass even if the stream had advanced, so the roll sequence itself is
+    // compared too: every diff of every swing, hit or miss, in order.
+    expect(previewed.rolls).toEqual(clean.rolls);
     expect(previewed.damage).toEqual(clean.damage);
+    expect(previewed.hashes).toEqual(clean.hashes);
+    // The fight has to actually roll for any of this to mean anything.
     expect(clean.damage.length).toBeGreaterThan(0);
+    expect(new Set(clean.damage).size).toBeGreaterThan(1);
+    expect(new Set(clean.hashes).size).toBe(clean.hashes.length);
   });
 
   it('leaves the hash untouched across a single preview', () => {
