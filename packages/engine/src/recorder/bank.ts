@@ -19,8 +19,8 @@ import { replay, type ReplayReport } from './replay.js';
  * fresh engine and compared against the numbers the bank says it produced.
  *
  * Everything here runs on the engine alone — no key, no network, no Python, no browser — because
- * that is what makes the bank affordable to run on every push. One expensive live playthrough
- * becomes a permanent free regression artifact; the rest of the bank is generated deterministically
+ * that is what makes the bank affordable to run on every push. Three expensive live playthroughs
+ * become permanent free regression artifacts; the rest of the bank is generated deterministically
  * from seeded intents (`packages/server/src/bank/generate.ts`).
  *
  * Four things are checked per session, and the bank is red if any of them moves:

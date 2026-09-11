@@ -27,35 +27,68 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const BANK_DIR = resolve(here, '../../../..', 'recordings/bank');
 
 /**
- * The one entry nobody can regenerate for free: the committed ten-turn playthrough against
- * `claude-opus-5` from ALE-17. Its bytes are evidence and are never rewritten; only its manifest
- * row is derived from them.
+ * The entries nobody can regenerate for free: ten-turn playthroughs against `claude-opus-5`, each
+ * roughly $2 and half an hour. Their bytes are evidence and are never rewritten; only their
+ * manifest rows are derived from them. ALE-25's gate is three of these, so there are three, and
+ * they are three different stories rather than the same story recorded three times — see
+ * `SCRIPTS` in `packages/server/src/acceptance.test.ts`.
  */
-const LIVE: Omit<BankSession, 'expect'> = {
-  name: 'm1-acceptance',
-  file: 'm1-acceptance.jsonl',
-  source: 'live',
-  description:
-    'The M1 acceptance run (ALE-17): ten player turns against the live model, 56 mutations, the ' +
-    'game master talking the yard down instead of swinging. The only entry a model actually ' +
-    'wrote, and the reason the bank is worth having — a rules, hash or diff change that a unit ' +
-    'test would not notice fails against a real session here, for free, forever.',
-  objective: { type: 'QuestAdvanced', where: { quest: 'carry-the-scout' } },
-};
+const LIVE: Omit<BankSession, 'expect'>[] = [
+  {
+    name: 'm1-acceptance',
+    file: 'm1-acceptance.jsonl',
+    source: 'live',
+    description:
+      'The M1 acceptance run (ALE-17): ten player turns against the live model, 56 mutations, ' +
+      'the game master talking the yard down instead of swinging. The first entry a model ' +
+      'actually wrote, and the reason the bank is worth having — a rules, hash or diff change ' +
+      'that a unit test would not notice fails against a real session here, for free, forever.',
+    objective: { type: 'QuestAdvanced', where: { quest: 'carry-the-scout' } },
+  },
+  {
+    name: 'yard-brawl',
+    file: 'yard-brawl.jsonl',
+    source: 'live',
+    description:
+      'ALE-25, and the first live recording with a death in it: the player crosses the yard, ' +
+      'kills Brannoc where he lies, and is killing Halloran by the end of the tenth turn. Four ' +
+      'player attacks, three landed, two fatal. Everything the M1 run could not reach is here — ' +
+      'damage, the `dead` condition, initiative wrapping, the action economy spending down — ' +
+      'written by a real model rather than by a seeded script, which is the difference between ' +
+      'this and `m0-yard-skirmish`. It took three live runs to get: two earlier brawls went after ' +
+      "Ilva's 9 hp, needed two landed hits, and got one.",
+    objective: { type: 'ConditionSet', where: { condition: 'dead', active: true } },
+  },
+  {
+    name: 'parley',
+    file: 'parley.jsonl',
+    source: 'live',
+    description:
+      'ALE-25, the playthrough in which the sword never leaves the scabbard: ten player turns of ' +
+      'nothing but speech and movement, and a game master that answers with 28 lines of ' +
+      'dialogue, nine flags, eight dispositions and two quest steps — it names the man who cut ' +
+      'Brannoc open, gets Ilva to half-vouch, unseals the gate, takes the player as surety and ' +
+      'sends a runner up the chain. No encounter ever starts, so no initiative, no action ' +
+      'economy and no damage appear anywhere in it, which is exactly what makes it worth keeping ' +
+      'beside the other two: it is the only live session that drives the world-authoring tools ' +
+      "in bulk, and the only one in which the engine's turn machinery is never touched at all.",
+    objective: { type: 'QuestAdvanced', where: { quest: 'carry-the-scout' } },
+  },
+];
 
 export function writeBank(dir: string = BANK_DIR): BankManifest {
   mkdirSync(dir, { recursive: true });
   const generated = generateBank();
   for (const { session, jsonl } of generated) writeFileSync(join(dir, session.file), jsonl);
 
-  const live: BankSession = {
-    ...LIVE,
+  const live: BankSession[] = LIVE.map((session) => ({
+    ...session,
     expect: bankExpectation(
-      parseRecording(readFileSync(join(dir, LIVE.file), 'utf8')),
-      LIVE.objective,
+      parseRecording(readFileSync(join(dir, session.file), 'utf8')),
+      session.objective,
     ),
-  };
-  const manifest: BankManifest = { sessions: [live, ...generated.map((g) => g.session)] };
+  }));
+  const manifest: BankManifest = { sessions: [...live, ...generated.map((g) => g.session)] };
   writeFileSync(join(dir, 'bank.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
