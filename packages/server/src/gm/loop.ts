@@ -11,6 +11,15 @@ import {
 } from '@deliberate/protocol';
 
 import type { Room, RoomSocket } from '../room.js';
+import {
+  createTurnCache,
+  decisionKey,
+  previewKey,
+  DEFAULT_CACHE_SIZE,
+  type CachedDecision,
+  type CachedPreview,
+  type CacheStats,
+} from './cache.js';
 import { LIVE_ENGINE_TOKEN, type EngineRegistry } from './engines.js';
 import { EMPTY_MEMORY, type GmPhase, type GmService, type MemoryBlocks } from './service.js';
 import { executeGmToolRequest, type GmToolDeps } from './tool.js';
@@ -30,6 +39,11 @@ import { executeGmToolRequest, type GmToolDeps } from './tool.js';
  * every previewed call against the real engine, in order, stopping at the first rejection the way
  * the GM's own batches do. A player may preview, change their mind, preview again, and GO: only
  * the last preview is pending, and each preview starts from a fresh clone of the real state.
+ *
+ * **Both are cached by (state hash, intent).** A preview asked twice of the same world returns from
+ * memory without a clone, an HTTP hop or a model call, and so does an NPC's decision (ALE-22). The
+ * hash *is* the invalidation: a changed world is a changed key. Nothing cached is authoritative —
+ * every call in a cached plan is re-validated against the real engine before it commits.
  *
  * **Resolve consults the GM for NPC turns.** M1 has no code brains (roadmap P1): an entity whose
  * `brain.policy` is `gm` takes its turn by the server asking the game master what it does, on the
@@ -68,6 +82,8 @@ export interface GmLoopOptions {
   resolveBudgetMs?: number;
   narrateBudgetMs?: number;
   maxNpcTurns?: number;
+  /** Entries the preview and NPC-decision caches keep. 0 turns caching off entirely (ALE-22). */
+  cacheSize?: number;
   /** Somewhere to note a GM failure. Defaults to nothing; `buildApp` passes the Fastify logger. */
   log?: (message: string) => void;
 }
@@ -81,6 +97,17 @@ export interface GmLoop {
   idle(): Promise<void>;
   /** The memory blocks the GM service handed back last. Node persists them; the service does not. */
   memory(): MemoryBlocks;
+  /**
+   * Warms the preview cache for intents the player might pick, while they are deliberating
+   * (ALE-22). Sends nothing, stages nothing, and yields the moment a real frame arrives; the only
+   * trace it leaves is that the preview the player does ask for may already be waiting.
+   *
+   * Which intents are "likely" is the UI's question, not this loop's — it is the same list the
+   * client already greys out or highlights — so it is passed in rather than guessed at here.
+   */
+  speculate(intents: (Intent | null)[]): Promise<void>;
+  /** Cache hits, misses and size, for the meters and for tests. */
+  cache(): { preview: CacheStats; decisions: CacheStats };
 }
 
 export function createGmLoop(options: GmLoopOptions): GmLoop {
@@ -91,12 +118,18 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   const maxNpcTurns = options.maxNpcTurns ?? MAX_NPC_TURNS;
   const log = options.log ?? (() => {});
   const liveDeps: GmToolDeps = { registry, room };
+  const cacheSize = options.cacheSize ?? DEFAULT_CACHE_SIZE;
+  const caching = cacheSize > 0;
+  const previews = createTurnCache<CachedPreview>(cacheSize);
+  const decisions = createTurnCache<CachedDecision>(cacheSize);
 
   let pending: PendingPreview | null = null;
   let memory: MemoryBlocks = EMPTY_MEMORY;
   /** One phase at a time. Two overlapping GOs would interleave mutations on one engine. */
   let inFlight: Promise<void> = Promise.resolve();
   let busy = false;
+  /** Set when a real frame arrives, so speculation stops between intents instead of racing it. */
+  let abandonSpeculation = false;
 
   const refuse = (socket: RoomSocket, reason: string): void => room.refuse(socket, reason);
 
@@ -147,26 +180,62 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     }
   };
 
+  /**
+   * Puts one planned call through the real engine. The plan may have come from a preview the
+   * player just watched or from a cache entry, and neither is evidence: the engine re-validates
+   * and re-rolls, and `false` means the rest of the batch was planned on a world that did not
+   * happen. The rejection is in the recording with the engine's reason.
+   */
+  const replayCall = (call: GmToolCall): boolean => {
+    const response = executeGmToolRequest(liveDeps, {
+      session: room.id,
+      turn: room.turn(),
+      engineToken: LIVE_ENGINE_TOKEN,
+      callId: null,
+      tool: call.name,
+      input: call.args,
+    });
+    if (!response.ok) {
+      log(`${call.name} was refused on the real engine: ${response.reason ?? 'no reason'}`);
+    }
+    return response.ok;
+  };
+
   // -------------------------------------------------------------------------------------------
   // Preview — on a clone, always
   // -------------------------------------------------------------------------------------------
 
-  const preview = async (socket: RoomSocket, message: PreviewRequestMessage): Promise<void> => {
+  /**
+   * One preview, from the cache or from the game master. Returns what a preview *is* — prose, the
+   * diffs to show, and the calls GO will re-validate — or the engine's reason for refusing the
+   * player's intent. Shared by the frame handler and by speculation so there is one preview path
+   * rather than two that could disagree about what gets cached.
+   */
+  const computePreview = async (
+    intent: Intent | null,
+    text: string | null,
+  ): Promise<CachedPreview | { refused: string }> => {
+    const key = previewKey(room.engine.hash(), intent, text);
+    if (caching) {
+      const hit = previews.get(key);
+      // A hit costs no clone, no HTTP hop and no model call: the world is bit-for-bit the world
+      // this answer was computed on, and GO will re-validate it against the real engine either
+      // way. `stateSummary` is derived from that same state, so there is nothing left to ask.
+      if (hit) return hit;
+    }
+
     const clone = registry.clone();
     // Nothing may mutate the real world while a preview is in flight, whatever engine token a tool
     // call claims. The clone is the isolation; this is the assertion that it held.
     registry.seal('That was a preview: nothing is committed until the player presses GO.');
     try {
       const diffs: Diff[] = [];
-      if (message.intent) {
-        const verdict = clone.engine.apply(message.intent);
-        if (!verdict.ok) {
-          // The player learns their action is illegal before GO rather than after it, and the real
-          // engine was never asked — the rejection came from the clone.
-          pending = null;
-          refuse(socket, verdict.reason);
-          return;
-        }
+      if (intent) {
+        const verdict = clone.engine.apply(intent);
+        // The player learns their action is illegal before GO rather than after it, and the real
+        // engine was never asked — the rejection came from the clone. Not cached: no model call
+        // was made, so there is nothing a second refusal would save.
+        if (!verdict.ok) return { refused: verdict.reason };
         diffs.push(...verdict.diff);
       }
 
@@ -174,39 +243,56 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
         'preview',
         {
           engineToken: clone.token,
-          intent: message.intent,
-          text: message.text ?? null,
+          intent,
+          text,
           snapshot: clone.engine.snapshot(),
         },
         previewBudget,
       );
       diffs.push(...answer.diffs);
 
-      const text = answer.narration || fallbackPreviewText(message.intent, answer.failed);
-      pending = {
-        turn: room.turn(),
-        hash: room.engine.hash(),
-        intent: message.intent,
+      const entry: CachedPreview = {
+        text: answer.narration || fallbackPreviewText(intent, answer.failed),
+        diffs,
         calls: answer.calls,
-        text,
-        diffs,
       };
-      // The preview goes to the player who asked for it: it is their deliberation, and nothing in
-      // it has happened. Only committed diffs and narration are broadcast to the room.
-      const frame: PreviewMessage = {
-        type: 'preview',
-        room: room.id,
-        turn: room.turn(),
-        text,
-        diffs,
-      };
-      socket.send(JSON.stringify(frame));
+      // A turn the game master never answered is not memoised: a timeout is a fact about one
+      // moment, and caching it would make a blip permanent for as long as the world stands still.
+      if (caching && !answer.failed) previews.set(key, entry);
+      return entry;
     } finally {
       // The clone dies with the preview. Nothing can act on it afterwards, so a late tool call
       // from a timed-out GM is refused rather than landing on a world nobody is looking at.
       registry.release(clone.token);
       registry.seal(null);
     }
+  };
+
+  const preview = async (socket: RoomSocket, message: PreviewRequestMessage): Promise<void> => {
+    const result = await computePreview(message.intent, message.text ?? null);
+    if ('refused' in result) {
+      pending = null;
+      refuse(socket, result.refused);
+      return;
+    }
+    pending = {
+      turn: room.turn(),
+      hash: room.engine.hash(),
+      intent: message.intent,
+      calls: result.calls,
+      text: result.text,
+      diffs: result.diffs,
+    };
+    // The preview goes to the player who asked for it: it is their deliberation, and nothing in
+    // it has happened. Only committed diffs and narration are broadcast to the room.
+    const frame: PreviewMessage = {
+      type: 'preview',
+      room: room.id,
+      turn: room.turn(),
+      text: result.text,
+      diffs: result.diffs,
+    };
+    socket.send(JSON.stringify(frame));
   };
 
   // -------------------------------------------------------------------------------------------
@@ -230,22 +316,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       }
     }
 
-    for (const call of staged.calls) {
-      const response = executeGmToolRequest(liveDeps, {
-        session: room.id,
-        turn: room.turn(),
-        engineToken: LIVE_ENGINE_TOKEN,
-        callId: null,
-        tool: call.name,
-        input: call.args,
-      });
-      if (!response.ok) {
-        // The rest of the batch was planned on a world that did not happen. The rejection is in
-        // the recording with the engine's reason, which is the evidence the ledger is built from.
-        log(`go: ${call.name} was refused on the real engine: ${response.reason ?? 'no reason'}`);
-        break;
-      }
-    }
+    for (const call of staged.calls) if (!replayCall(call)) break;
 
     await resolve();
     await narrate(staged);
@@ -262,11 +333,24 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       if (!acting) return;
 
       if (gm) {
-        await ask(
-          'resolve',
-          { engineToken: LIVE_ENGINE_TOKEN, intent: null, text: null, snapshot, acting },
-          resolveBudget,
-        );
+        // The same world and the same NPC is the same question, so the answer is memoised too
+        // (ALE-22). What comes back is the *plan* — the mutations the game master asked for — and
+        // it is replayed through the very same `/gm/tool` door, so the engine validates every call
+        // and rolls its own dice afresh. A cached decision can therefore fail where the first one
+        // succeeded, which is correct: the cache remembers what an NPC decided to try, never what
+        // the world let it do.
+        const key = decisionKey(room.engine.hash(), acting);
+        const hit = caching ? decisions.get(key) : undefined;
+        if (hit) {
+          for (const call of hit) if (!replayCall(call)) break;
+        } else {
+          const answer = await ask(
+            'resolve',
+            { engineToken: LIVE_ENGINE_TOKEN, intent: null, text: null, snapshot, acting },
+            resolveBudget,
+          );
+          if (caching && !answer.failed) decisions.set(key, answer.calls);
+        }
       }
 
       const after = room.engine.snapshot();
@@ -314,7 +398,13 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       return;
     }
     busy = true;
-    inFlight = work()
+    // Speculation is work nobody asked for, so a real frame takes the loop back: the flag stops it
+    // at the next intent, and chaining on `inFlight` lets the one already in the air unwind first
+    // rather than interleaving two previews on one registry.
+    abandonSpeculation = true;
+    inFlight = inFlight
+      .catch(() => {})
+      .then(work)
       .catch((error: unknown) => {
         refuse(socket, 'Something went wrong running that turn.');
         log(`gm loop failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -322,6 +412,25 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       .finally(() => {
         busy = false;
       });
+  };
+
+  const speculate = (intents: (Intent | null)[]): Promise<void> => {
+    // Speculation only fills a cache. It stages nothing, sends nothing, and yields to the player,
+    // so the worst case of being wrong about what they will pick is a model call nobody used.
+    if (!caching || !gm || busy) return inFlight;
+    abandonSpeculation = false;
+    inFlight = inFlight
+      .catch(() => {})
+      .then(async () => {
+        for (const intent of intents) {
+          if (abandonSpeculation || busy) return;
+          await computePreview(intent, null);
+        }
+      })
+      .catch((error: unknown) => {
+        log(`speculation failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    return inFlight;
   };
 
   return {
@@ -340,6 +449,8 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     pending: () => pending,
     idle: () => inFlight,
     memory: () => memory,
+    speculate,
+    cache: () => ({ preview: previews.stats(), decisions: decisions.stats() }),
   };
 }
 

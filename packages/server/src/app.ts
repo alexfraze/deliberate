@@ -87,6 +87,11 @@ export interface AppOptions {
    * "the GM never answered". `src/index.ts` reads them from the environment; ALE-17 passes its own.
    */
   budgets?: { preview?: number; resolve?: number; narrate?: number };
+  /**
+   * Entries the preview and NPC-decision caches keep (ALE-22). `0` turns caching off, which is
+   * what a test measuring the cold path wants. `src/index.ts` reads it from the environment.
+   */
+  cacheSize?: number;
   room?: RoomId;
   /**
    * Directory for JSONL session recordings. `null` (the default) records nothing, which is what
@@ -119,6 +124,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     ...(opts.budgets?.preview ? { previewBudgetMs: opts.budgets.preview } : {}),
     ...(opts.budgets?.resolve ? { resolveBudgetMs: opts.budgets.resolve } : {}),
     ...(opts.budgets?.narrate ? { narrateBudgetMs: opts.budgets.narrate } : {}),
+    ...(opts.cacheSize === undefined ? {} : { cacheSize: opts.cacheSize }),
     log: (message) => app.log.warn(message),
   });
   app.decorate('gm', gm);
@@ -137,6 +143,8 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     // The JSONL this session is being written to, so `pnpm replay` (and the acceptance suite)
     // knows which file to check. Null when recording is off.
     recording: recording?.path ?? null,
+    // Preview and NPC-decision cache hit rates for this session (ALE-22).
+    cache: gm.cache(),
   }));
 
   /**

@@ -7,6 +7,16 @@
  */
 
 export {
+  createTurnCache,
+  decisionKey,
+  previewKey,
+  DEFAULT_CACHE_SIZE,
+  type CacheStats,
+  type CachedDecision,
+  type CachedPreview,
+  type TurnCache,
+} from './cache.js';
+export {
   createEngineRegistry,
   LIVE_ENGINE_TOKEN,
   type EngineHandle,

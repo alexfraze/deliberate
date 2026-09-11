@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 
 import { buildApp } from './app.js';
+import { DEFAULT_CACHE_SIZE } from './gm/cache.js';
 import { NARRATE_BUDGET_MS, PREVIEW_BUDGET_MS, RESOLVE_BUDGET_MS } from './gm/loop.js';
 import { httpGmService } from './gm/service.js';
 
@@ -33,11 +34,16 @@ const budgets = {
   narrate: ms('GM_NARRATE_BUDGET_MS', NARRATE_BUDGET_MS),
 };
 
+// Preview and NPC-decision cache (ALE-22). Keyed by state hash, so it invalidates itself; set
+// GM_CACHE_SIZE=0 to turn it off and measure the cold path.
+const cacheSize = Number(process.env['GM_CACHE_SIZE'] ?? DEFAULT_CACHE_SIZE);
+
 const app = await buildApp({
   logger: true,
   recordings,
   scene,
   budgets,
+  ...(Number.isFinite(cacheSize) ? { cacheSize } : {}),
   gm: gmUrl
     ? httpGmService({ baseUrl: gmUrl, timeoutMs: Math.max(...Object.values(budgets)) })
     : null,
