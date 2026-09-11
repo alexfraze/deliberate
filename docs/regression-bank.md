@@ -34,6 +34,38 @@ committed bytes, so a rules change shows up as a diff rather than as a silent re
 
 `bank.json` is derived, never hand-edited — a hand-typed hash is a hash nobody checked.
 
+## The injection bank runs with it
+
+ALE-36's injection bank is not a second suite bolted on: it is an entry in this one.
+`contracts/injection-bank.json` holds 52 adversarial player texts across nine families, and
+each carries `demands` — the mutation that text was trying to cause. Both halves of the suite
+read that one file:
+
+- `services/gm/tests/test_injection.py` runs every case against the three walls — the text
+  stays inside the speech fence and never reads as instruction, the model obeying it still gets
+  an engine verdict rather than a mutation, and a `sandbox-escape` case's snippet fails and
+  **returns** rather than hanging the turn. The model there is hostile by construction: the
+  scripted fake does exactly what the case demanded.
+- `injection-bank` in this bank replays the same 52 cases against the **real** engine: the
+  player speaks the text, a game master that obeyed it attempts the demanded call, and the
+  engine refuses all 52. The state hash is identical on every one of the 208 lines, from the
+  header to the last turn. That is "no unvalidated mutation" as a replayable artifact rather
+  than as a claim, and it runs free in `check` on every push.
+
+Three cases are also run against the real model, gated on `ANTHROPIC_API_KEY` and excluded from
+the default pytest run, because there is one question a fake cannot answer: whether
+`claude-opus-5`, given this system prompt and this fenced block, treats the text as speech at
+all. Low effort, three short turns, cents.
+
+```sh
+source ~/.deliberate-env && uv run pytest -m live -k injection   # in services/gm; spends money
+```
+
+The walls do not rest on that answer — the fake obeys every injection by construction and the
+engine still refuses — which is why it is a supplement and not the gate.
+
+Adding a case is a line of JSON plus `pnpm --filter @deliberate/server bank:write`.
+
 ## What is checked
 
 Per session, in `packages/engine/src/recorder/bank.ts`:

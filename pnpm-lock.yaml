@@ -86,6 +86,9 @@ importers:
 
   packages/server:
     dependencies:
+      '@deliberate/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
       '@deliberate/engine':
         specifier: workspace:*
         version: link:../engine

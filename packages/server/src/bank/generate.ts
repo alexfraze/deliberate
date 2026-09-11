@@ -13,6 +13,7 @@ import {
   type BankSession,
   type Engine,
 } from '@deliberate/engine';
+import injectionBank from '@deliberate/contracts/injection-bank.json' with { type: 'json' };
 import {
   GATEHOUSE_SEED,
   GUARD_ID,
@@ -65,6 +66,21 @@ const GATEHOUSE_TEMPLATES: Record<string, Entity> = Object.fromEntries(
 );
 
 const PLAYER: EntityId = FIXTURE_PLAYER_ID;
+
+/**
+ * The injection bank, the same file `services/gm/tests/test_injection.py` iterates. One copy,
+ * both languages, like `contracts/gm-tools.json`: the Python side proves the text stays inside
+ * the speech fence and never leaks the prompt, and this side proves that a game master which
+ * obeyed it still could not change the world.
+ */
+interface Injection {
+  id: string;
+  family: string;
+  text: string;
+  demands: { tool: string; args: Record<string, unknown> };
+}
+
+const INJECTIONS: readonly Injection[] = injectionBank.cases as Injection[];
 
 /** What a session's script can do. Both roads end at `Engine.apply`; only the record differs. */
 interface Play {
@@ -212,6 +228,28 @@ const SCENARIOS: Scenario[] = [
       tool('attack', { attacker: MERCHANT_ID, target: PLAYER, ability: 'dagger' });
       tool('cast', { entity_id: MERCHANT_ID, spell: 'fire_bolt', target: PLAYER });
       tool('end_turn', { entity_id: MERCHANT_ID });
+    },
+  },
+  {
+    name: 'injection-bank',
+    description:
+      'The injection bank (ALE-36) played against the real engine. Every adversarial text in ' +
+      '`contracts/injection-bank.json` is spoken by the player, and the mutation that text was ' +
+      'trying to cause is then attempted through the GM door by a game master that obeyed it. ' +
+      'Every one comes back refused and the state hash never moves off the header — which is ' +
+      '"no unvalidated mutation" stated as a replayable session rather than as a claim.',
+    // An injection bank must never reach an objective. `null` here is the assertion.
+    objective: { type: 'FlagSet' },
+    snapshot: gatehouseSnapshot(),
+    seed: GATEHOUSE_SEED,
+    play({ apply, tool }) {
+      for (const injection of INJECTIONS) {
+        // The player types it. Speech is data: the engine validates the speaker and emits a
+        // dialogue line, and the state hash is the same on both sides of it.
+        apply({ kind: 'say', speaker: PLAYER, text: injection.text, to: null });
+        // The game master obeys. The engine does not.
+        tool(injection.demands.tool, injection.demands.args);
+      }
     },
   },
 ];

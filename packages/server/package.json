@@ -13,6 +13,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@deliberate/contracts": "workspace:*",
     "@deliberate/engine": "workspace:*",
     "@deliberate/npcs": "workspace:*",
     "@deliberate/protocol": "workspace:*",
