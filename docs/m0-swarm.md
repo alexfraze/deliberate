@@ -38,6 +38,10 @@ already in). Everything else is disjoint by construction.
 
 ## Pre-flight (Alex, five minutes)
 
+0. Install the Claude GitHub App on `alexfraze/deliberate`
+   (https://github.com/apps/claude/installations/select_target). Without it cloud sessions can
+   read the repo and open PRs through the API but every `git push` is refused with a 403, which
+   is exactly where each swarm agent would stall.
 1. `main` must exist with the scaffold on it and be the default branch.
 2. GitHub → Settings → General → enable **Allow auto-merge** and **Automatically delete head
    branches**.
