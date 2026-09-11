@@ -4,14 +4,8 @@ import json
 
 import pytest
 
-from deliberate_gm.contracts import (
-    MUTATION_TOOL_NAMES,
-    QUERY_TOOL_NAMES,
-    ContractError,
-    load_contract,
-    load_tools,
-    tool_names,
-)
+from deliberate_gm.config import Settings
+from deliberate_gm.contracts import ContractError, load_contract, load_tools, tool_names
 
 from .conftest import FIXTURE_TOOLS, REAL_CONTRACT
 
@@ -41,16 +35,19 @@ def test_normalizing_does_not_mutate_the_source_schema() -> None:
     assert json.dumps(json.loads(FIXTURE_TOOLS.read_text()), sort_keys=True) == before
 
 
-@pytest.mark.skipif(not REAL_CONTRACT.exists(), reason="contracts/gm-tools.json is ALE-31's")
-def test_real_contract_covers_the_blueprint_tools() -> None:
-    """Starts enforcing the moment ALE-31 lands the file; nothing here changes then."""
+def test_the_real_contract_loads_and_classifies_every_tool() -> None:
+    """Properties of the shipped file, not a second copy of its contents.
+
+    Which tools exist is the contract's business; that each one declares a kind, and that
+    nothing the API would reject rides along, is ours.
+    """
     contract = load_contract(REAL_CONTRACT)
-    names = set(contract.names())
-    assert set(QUERY_TOOL_NAMES) <= names
-    assert set(MUTATION_TOOL_NAMES) <= names
-    # Whatever else the file says, the entries the API sees carry only what the API takes.
+    assert contract.tools
     for tool in contract.tools:
-        assert set(tool) == {"name", "description", "strict", "input_schema"}, tool["name"]
+        name = str(tool["name"])
+        assert contract.kind_of(name) in ("query", "mutation"), name
+        assert set(tool) == {"name", "description", "strict", "input_schema"}, name
+        assert tool["description"], name
 
 
 def test_kind_comes_from_the_entry() -> None:
@@ -90,27 +87,27 @@ def test_contract_only_fields_never_reach_the_api(tmp_path) -> None:
     assert contract.kind_of("attack") == "mutation"
 
 
-def test_a_contract_without_kind_still_loads(tmp_path) -> None:
-    """Transitional: classification falls back to the blueprint name lists."""
+def test_a_tool_without_a_kind_is_refused(tmp_path) -> None:
+    """Loudly, rather than guessed at. A misclassified mutation would let a rejected change
+    go unnoticed while the rest of the batch proceeded on it."""
     path = tmp_path / "gm-tools.json"
     path.write_text(
         json.dumps(
-            {
-                "tools": [
-                    {"name": "get_state", "description": "d", "input_schema": {"type": "object"}},
-                    {"name": "attack", "description": "d", "input_schema": {"type": "object"}},
-                ]
-            }
+            {"tools": [{"name": "attack", "description": "d", "input_schema": {"type": "object"}}]}
         )
     )
-    contract = load_contract(path)
-    assert contract.kind_of("get_state") == "query"
-    assert contract.kind_of("attack") == "mutation"
+    with pytest.raises(ContractError, match="has no `kind`"):
+        load_contract(path)
 
 
 def test_a_duplicate_tool_is_refused(tmp_path) -> None:
     path = tmp_path / "gm-tools.json"
-    entry = {"name": "attack", "description": "d", "input_schema": {"type": "object"}}
+    entry = {
+        "name": "attack",
+        "kind": "mutation",
+        "description": "d",
+        "input_schema": {"type": "object"},
+    }
     path.write_text(json.dumps({"tools": [entry, entry]}))
     with pytest.raises(ContractError, match="appears twice"):
         load_contract(path)
@@ -125,3 +122,15 @@ def test_the_service_tool_is_added_after_the_contracts() -> None:
     assert extended.kind_of("python") == "query"
     # The original is untouched: the contract is frozen data, not a mutable registry.
     assert "python" not in contract.names()
+
+
+def test_default_settings_find_the_contract_from_anywhere() -> None:
+    """`Settings()` and `Settings.from_env()` must resolve the same file.
+
+    The default used to be the relative `contracts/gm-tools.json`, which only worked when the
+    service happened to be started from the repository root -- and silently degraded to a 503
+    saying the contract was missing when it was not.
+    """
+    assert Settings().tools_path == Settings.from_env().tools_path
+    assert Settings().tools_path.is_absolute()
+    assert Settings().tools_path == REAL_CONTRACT

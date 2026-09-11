@@ -103,7 +103,10 @@ both languages). This service never defines a schema, so the two languages canno
 does force `strict: true`, `additionalProperties: false` and `required` on every tool, which
 is what makes tool arguments schema-valid.
 
-Each entry carries a `kind` of `"query"` or `"mutation"`, and `load_contract` keeps it. The
+Each entry carries a `kind` of `"query"` or `"mutation"`, and `load_contract` keeps it. An
+entry without one is refused loudly rather than guessed at: the contract file is the only
+place the classification is written down, and a name list on this side would be a second copy
+of a fact the contract owns, in a second language. The
 loop needs the distinction: a mutation's `tool_result` is an engine verdict, and a rejected
 one invalidates the plan the rest of the batch was built on, so the batch stops there. A
 rejected query is just information and the batch continues. Anything the contract does not
