@@ -89,6 +89,9 @@ importers:
       '@deliberate/engine':
         specifier: workspace:*
         version: link:../engine
+      '@deliberate/npcs':
+        specifier: workspace:*
+        version: link:../../content/npcs
       '@deliberate/protocol':
         specifier: workspace:*
         version: link:../protocol

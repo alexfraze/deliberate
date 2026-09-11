@@ -31,7 +31,9 @@ describe('protocol constants', () => {
 
 describe('protocol shapes', () => {
   it('discriminates client and server messages on `type`', () => {
-    expectTypeOf<ClientMessage['type']>().toEqualTypeOf<'join' | 'intent'>();
+    expectTypeOf<ClientMessage['type']>().toEqualTypeOf<
+      'join' | 'intent' | 'preview_request' | 'go'
+    >();
     expectTypeOf<ServerMessage['type']>().toEqualTypeOf<
       'snapshot' | 'preview' | 'diffs' | 'narration' | 'error'
     >();

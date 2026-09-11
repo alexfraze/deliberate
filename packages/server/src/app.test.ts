@@ -23,7 +23,7 @@ let app: Awaited<ReturnType<typeof buildApp>>;
 let baseUrl: string;
 
 beforeEach(async () => {
-  app = await buildApp();
+  app = await buildApp({ scene: 'fixture' });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const address = app.server.address();
   if (!address || typeof address === 'string') throw new Error('no address');
@@ -229,5 +229,89 @@ describe('turn protocol over a websocket', () => {
     expect(commits[0]?.verdict.ok).toBe(true);
     expect(commits[0]?.hashAfter).not.toBe(before.hash);
     await client.close();
+  });
+});
+
+/**
+ * `POST /gm/tool` over real HTTP (ALE-32). This is the only door into the engine for the game
+ * master, and what it has to guarantee is narrow: a query is free, a rejected mutation leaves the
+ * world exactly as it was, and a malformed body never reaches the engine at all.
+ */
+describe('POST /gm/tool', () => {
+  it('answers a query without changing the world', async () => {
+    const before = app.room.engine.hash();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/gm/tool',
+      payload: {
+        session: 'main',
+        turn: 0,
+        engine_token: 'live',
+        call_id: 'c1',
+        tool: 'get_state',
+        input: { scope: 'world', entity_id: null },
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { ok: boolean; kind: string; diff: unknown[] };
+    expect(body).toMatchObject({ ok: true, kind: 'query', diff: [] });
+    expect(app.room.engine.hash()).toBe(before);
+  });
+
+  it('applies a mutation through the engine and broadcasts its diffs', async () => {
+    const before = app.room.engine.hash();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/gm/tool',
+      payload: {
+        engine_token: 'live',
+        tool: 'set_flag',
+        input: { key: 'gm-was-here', value: true },
+      },
+    });
+    const body = response.json() as { ok: boolean; kind: string; diff: { type: string }[] };
+    expect(body.ok).toBe(true);
+    expect(body.kind).toBe('mutation');
+    expect(body.diff[0]?.type).toBe('FlagSet');
+    expect(app.room.engine.hash()).not.toBe(before);
+    expect(app.room.engine.snapshot().world.flags['gm-was-here']).toBe(true);
+  });
+
+  it('leaves the world untouched when the engine refuses', async () => {
+    const before = app.room.engine.hash();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/gm/tool',
+      payload: {
+        engine_token: 'live',
+        tool: 'move',
+        input: { entity_id: 'nobody', to: { x: 1, y: 1 } },
+      },
+    });
+    const body = response.json() as { ok: boolean; reason: string };
+    expect(body.ok).toBe(false);
+    expect(body.reason).toContain('nobody');
+    expect(app.room.engine.hash()).toBe(before);
+  });
+
+  it('refuses a malformed body before the engine sees it', async () => {
+    const response = await app.inject({ method: 'POST', url: '/gm/tool', payload: { input: {} } });
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { reason: string }).reason).toContain('must name a tool');
+  });
+
+  it('refuses an engine token it never minted', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/gm/tool',
+      payload: {
+        engine_token: 'someone-elses-engine',
+        tool: 'set_flag',
+        input: { key: 'x', value: 1 },
+      },
+    });
+    const body = response.json() as { ok: boolean; reason: string };
+    expect(body.ok).toBe(false);
+    expect(body.reason).toContain('someone-elses-engine');
   });
 });

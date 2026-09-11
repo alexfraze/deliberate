@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@deliberate/engine": "workspace:*",
+    "@deliberate/npcs": "workspace:*",
     "@deliberate/protocol": "workspace:*",
     "@fastify/websocket": "^11.3.0",
     "fastify": "^5.12.3"

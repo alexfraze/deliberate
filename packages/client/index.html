@@ -38,6 +38,70 @@
       .hud-error {
         color: #ff8a7a;
       }
+      #deliberate {
+        position: fixed;
+        right: 12px;
+        top: 12px;
+        width: 280px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #e6e6e6;
+        background: rgba(11, 13, 16, 0.82);
+        border: 1px solid #1e2733;
+        border-radius: 8px;
+        padding: 10px 12px;
+        text-shadow: 0 1px 2px #000;
+      }
+      #deliberate .dl-toggle {
+        display: block;
+        color: #7d8b99;
+        cursor: pointer;
+        user-select: none;
+      }
+      #deliberate:not(.dl-open) .dl-staged,
+      #deliberate:not(.dl-open) .dl-preview,
+      #deliberate:not(.dl-open) .dl-reactions,
+      #deliberate:not(.dl-open) .dl-narration,
+      #deliberate:not(.dl-open) #go {
+        display: none;
+      }
+      #deliberate .dl-staged {
+        margin-top: 8px;
+        color: #9fd0ff;
+      }
+      #deliberate .dl-preview {
+        margin-top: 6px;
+        color: #c8cdd3;
+        font-style: italic;
+      }
+      #deliberate .dl-reactions {
+        margin: 8px 0 0;
+        padding-left: 18px;
+        color: #d8c48a;
+      }
+      #deliberate #go {
+        margin-top: 10px;
+        width: 100%;
+        padding: 6px 0;
+        font: inherit;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: #0b0d10;
+        background: #9fd0ff;
+        border: 0;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      #deliberate #go:disabled {
+        background: #33414f;
+        color: #7d8b99;
+        cursor: default;
+      }
+      #deliberate .dl-narration {
+        margin-top: 10px;
+        color: #e6e6e6;
+        white-space: pre-wrap;
+      }
       #overlay {
         position: fixed;
         inset: 0;
@@ -59,6 +123,7 @@
     <div id="app"></div>
     <div id="overlay"></div>
     <div id="hud"></div>
+    <div id="deliberate"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

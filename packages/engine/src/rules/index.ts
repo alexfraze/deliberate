@@ -32,6 +32,7 @@ export {
 } from './context.js';
 export { checkAttack, checkEndTurn, checkMove, createEngine } from './create-engine.js';
 export {
+  ACTING_BRAIN_POLICIES,
   actsOnItsOwn,
   advanceTurn,
   canTakeTurn,

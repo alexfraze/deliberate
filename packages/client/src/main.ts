@@ -18,6 +18,7 @@ import { REVISION, Vector2 } from 'three/webgpu';
 import { AnimationQueue, samplePath, type Animation, type QueueEvent } from './animation.js';
 import { cellAt } from './grid.js';
 import { createHud, type FloatingNumber } from './hud.js';
+import { createDeliberatePanel } from './panel.js';
 import { createRenderer } from './renderer.js';
 import { createGameScene } from './scene.js';
 import { resolvePick } from './selection.js';
@@ -29,6 +30,8 @@ const hudElement =
   document.getElementById('hud') ?? document.body.appendChild(document.createElement('div'));
 const overlay =
   document.getElementById('overlay') ?? document.body.appendChild(document.createElement('div'));
+const panelElement =
+  document.getElementById('deliberate') ?? document.body.appendChild(document.createElement('div'));
 
 const hud = createHud(hudElement, overlay);
 const scene = createGameScene();
@@ -36,6 +39,16 @@ const queue = new AnimationQueue();
 const floats = new Map<Animation, FloatingNumber>();
 
 let view: ViewState = emptyView();
+
+/**
+ * The preview-then-GO panel (ALE-32). Off by default: with it off a click commits immediately,
+ * which is the M0 path the acceptance suite plays. With it on, a click stages an action, the
+ * server previews it against a clone of the engine, and nothing happens until GO.
+ */
+const panel = createDeliberatePanel(panelElement, {
+  nameOf: (id) => view.entities[id]?.name ?? id,
+});
+
 let selected: EntityId | null = null;
 let turn = 0;
 let hash = '';
@@ -115,14 +128,18 @@ function onMessage(message: ServerMessage): void {
     }
     case 'error': {
       hud.setError(message.reason);
+      panel.reset(message.reason);
       return;
     }
     case 'preview': {
+      // Nothing in here has happened: it is what the game master says would happen if you GO.
+      turn = message.turn;
+      panel.showPreview(message.text, message.diffs);
       hud.setHint(message.text);
       return;
     }
     case 'narration': {
-      hud.setHint(message.chunk);
+      panel.narrate(message.chunk, message.done);
       return;
     }
   }
@@ -215,7 +232,19 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
   else if (result.hint !== null) hud.setHint(result.hint);
   if (result.intent) {
     hud.setError(null);
-    transport.send({ type: 'intent', room: DEFAULT_ROOM, turn, intent: result.intent });
+    if (panel.isOn()) {
+      // Deliberate: ask for a preview. Clicking somewhere else replaces it — the server keeps only
+      // the last preview, so changing your mind costs nothing and commits nothing.
+      panel.stage(result.intent);
+      transport.send({
+        type: 'preview_request',
+        room: DEFAULT_ROOM,
+        turn,
+        intent: result.intent,
+      });
+    } else {
+      transport.send({ type: 'intent', room: DEFAULT_ROOM, turn, intent: result.intent });
+    }
   }
 });
 
@@ -228,6 +257,16 @@ renderer.domElement.addEventListener(
   },
   { passive: false },
 );
+
+panel.onGo(() => {
+  hud.setError(null);
+  panel.committing();
+  transport.send({ type: 'go', room: DEFAULT_ROOM, turn });
+});
+panel.onToggle(() => {
+  panel.reset();
+  hud.setError(null);
+});
 
 window.addEventListener('beforeunload', () => transport.close());
 

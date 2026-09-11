@@ -48,9 +48,21 @@ export function canTakeTurn(store: Store, entity: EntityId): boolean {
   return !!e && isAlive(e.components.health);
 }
 
-/** M0: only `player` brains act; everyone else's turn is skipped until NPC policies exist (M1). */
+/**
+ * Brains whose turn is worth stopping on. `player` is the UI; `gm` is the game master, which the
+ * server consults for that entity's turn (ALE-32). Everyone else — `none`, or no brain at all — is
+ * scenery and is skipped, and when a whole cycle finds nobody the encounter ends.
+ *
+ * This is the one place the engine knows the game master exists, and it knows nothing about it
+ * beyond the name: `advanceTurn` stops on a `gm` entity, and what happens next is the server's
+ * business. Without it initiative would step straight over every NPC in `content/npcs`, which all
+ * carry `brain.policy: 'gm'`, and no NPC would ever take a turn.
+ */
+export const ACTING_BRAIN_POLICIES: readonly string[] = ['player', 'gm'];
+
 export function actsOnItsOwn(store: Store, entity: EntityId): boolean {
-  return store.getComponent(entity, 'brain')?.policy === 'player';
+  const policy = store.getComponent(entity, 'brain')?.policy;
+  return policy !== undefined && ACTING_BRAIN_POLICIES.includes(policy);
 }
 
 export interface TurnAdvance {

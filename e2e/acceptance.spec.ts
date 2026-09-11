@@ -113,6 +113,33 @@ test('play the M0 fixture by UI alone, then replay the recording', async ({ page
   await clickAt(page, await screenOfEntity(page, DUMMY_A));
   await expect(hud(page)).toContainText('Training Dummy A (dummies) · 2/10 hp');
 
+  // --- preview, change your mind, preview again, then GO (ALE-32) -------------------------------
+  // The acceptance criterion for M1's turn loop, played through the real UI: a preview must never
+  // move anything. There is no game master on this machine, so what comes back is the engine's own
+  // resolution of the staged move — which is exactly what has to stay speculative.
+  await page.locator('#deliberate-toggle').check();
+  await clickAt(page, await screenOfEntity(page, DUMMY_A)); // deselect
+  await clickAt(page, await screenOfEntity(page, PLAYER)); // select the player again
+  await expect(hud(page)).toContainText('Player (party) · 12/12 hp · (7, 3)');
+
+  // Tiles south of the player, so the click lands on the ground and not on a capsule standing in
+  // front of it.
+  const staged = page.locator('#deliberate .dl-staged');
+  const reactions = page.locator('#deliberate .dl-reactions li');
+  await clickAt(page, await screenOfTile(page, { x: 6, y: 4 }));
+  await expect(staged).toHaveText('Player → (6, 4)');
+  await expect(reactions.first()).toHaveText('Player moves to (6, 4).');
+
+  // Change your mind: the preview is replaced, and still nothing has happened.
+  await clickAt(page, await screenOfTile(page, { x: 7, y: 4 }));
+  await expect(staged).toHaveText('Player → (7, 4)');
+  await expect(reactions.first()).toHaveText('Player moves to (7, 4).');
+  await expect(hud(page)).toContainText('Player (party) · 12/12 hp · (7, 3)');
+
+  await page.locator('#go').click();
+  await settle(page);
+  await expect(hud(page)).toContainText('Player (party) · 12/12 hp · (7, 4)');
+
   expect(pageErrors).toEqual([]);
 
   // --- replay the session the server recorded ---------------------------------------------------
