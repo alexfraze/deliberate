@@ -8,17 +8,20 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 
 import { createEngine, parseRecording, replay } from '@deliberate/engine';
-import { GUARD_ID, MERCHANT_ID } from '@deliberate/npcs';
+import { GATEHOUSE_SEED, GUARD_ID, MERCHANT_ID, gatehouseSnapshot } from '@deliberate/npcs';
 import {
   PROTOCOL_VERSION,
+  type EntityId,
   type Intent,
   type RecordedTurn,
   type RecordingHeader,
   type RecordingLine,
   type ServerMessage,
+  type Snapshot,
 } from '@deliberate/protocol';
 
 import { buildApp } from './app.js';
+import { GM_BRAIN_POLICY } from './gm/loop.js';
 import { httpGmService, type GmService, type GmTurnResponse } from './gm/service.js';
 
 /**
@@ -47,8 +50,17 @@ import { httpGmService, type GmService, type GmTurnResponse } from './gm/service
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '../../..');
 
-/** The committed evidence: the JSONL a real ten-turn playthrough wrote. Replayed in CI. */
-const FIXTURE = join(repoRoot, 'recordings', 'm1-acceptance.jsonl');
+/**
+ * The committed evidence: the JSONL a real ten-turn playthrough against `claude-opus-5` wrote.
+ *
+ * It lives beside the test rather than in `recordings/`, which is gitignored — a recording that
+ * never reaches CI proves nothing there. Replaying it needs the engine and nothing else: no key,
+ * no model, no network. So one expensive live run becomes a permanent free regression artifact,
+ * and anyone who later changes the rules, the hash or the diff set gets an immediate failure
+ * showing they broke determinism against a real model-driven session. This is the first entry in
+ * the bank ALE-21 (M3, replay-based regression suite) will grow.
+ */
+const FIXTURE = join(here, 'fixtures', 'm1-acceptance.jsonl');
 
 // ---------------------------------------------------------------------------------------------
 // The assertions. One function, run against the committed recording and against a fresh one.
@@ -115,7 +127,7 @@ function assertAcceptance(lines: RecordingLine[], playerTurns: number): void {
 
 describe('M1 acceptance evidence', () => {
   it('replays the recorded ten-turn playthrough to identical hashes', () => {
-    assertAcceptance(parseRecording(readFileSync(FIXTURE, 'utf8')), PLAYTHROUGH.length);
+    assertAcceptance(parseRecording(readFileSync(FIXTURE, 'utf8')), BEATS.length);
   });
 });
 
@@ -128,44 +140,181 @@ interface ScriptedTurn {
   text?: string;
 }
 
+/** What the player is trying to do on each of the ten turns. The shape of the story, not the moves. */
+type Beat = 'hail' | 'approach' | 'ask-ilva' | 'plead' | 'fight';
+
 /**
- * The playthrough. Dialogue first, then a drawn sword, so `say`, `set_disposition`, `attack` and
- * `end_turn` all have a reason to appear. Every intent is legal from the gatehouse start against
- * the real rules — the sequence is checked by the engine before a turn of it is ever previewed.
+ * The playthrough: dialogue first, then a drawn sword, so `say`, `set_disposition`, `attack` and
+ * `end_turn` all have a reason to appear.
  *
- * The moves walk the player from (2, 9) up to (6, 5), the one tile adjacent to the gate the guard
- * stands on. Attacking starts the encounter; from then on `end_turn` is what passes the initiative
- * to Halloran, which is when the game master takes an NPC turn on the real engine.
+ * **The beats are fixed; the intents are not.** A first attempt at this hard-coded ten intents, and
+ * it died on turn 5 against the live model with "(6, 5) is occupied." — the game master had walked
+ * Halloran onto the tile the script was about to step on. That is not a flaw in the run, it is the
+ * whole point of the milestone: the world moves between your decision and your next one. So each
+ * turn is resolved against the **live snapshot** the way a UI resolves it, by offering the engine a
+ * preference-ordered list of candidates and taking the first one it calls legal. That is
+ * `legal_actions` by another name, and it is what keeps a ten-turn run reproducible without
+ * pretending the game master will stand still.
  */
-const PLAYTHROUGH: ScriptedTurn[] = [
-  {
-    intent: { kind: 'say', speaker: 'player', text: 'Hail the gate!', to: GUARD_ID },
+const BEATS: Beat[] = [
+  'hail',
+  'approach',
+  'ask-ilva',
+  'approach',
+  'plead',
+  'approach',
+  'fight',
+  'fight',
+  'fight',
+  'fight',
+];
+
+const SPEECH: Partial<Record<Beat, { line: string; to: EntityId; text: string }>> = {
+  hail: {
+    line: 'Hail the gate!',
+    to: GUARD_ID,
     text: 'I want to get a wounded man through this gate. Who do I talk to?',
   },
-  { intent: { kind: 'move', entity: 'player', to: { x: 2, y: 6 } } },
-  {
-    intent: { kind: 'say', speaker: 'player', text: 'Ilva, a word.', to: MERCHANT_ID },
+  'ask-ilva': {
+    line: 'Ilva, a word.',
+    to: MERCHANT_ID,
     text: 'I ask Ilva whether she will vouch for me with the warden.',
   },
-  { intent: { kind: 'move', entity: 'player', to: { x: 6, y: 6 } } },
-  {
-    intent: {
-      kind: 'say',
-      speaker: 'player',
-      text: 'Warden, the watchword is burned. Brannoc is bleeding out in your yard.',
-      to: GUARD_ID,
-    },
+  plead: {
+    line: 'Warden, the watchword is burned. Brannoc is bleeding out in your yard.',
+    to: GUARD_ID,
     text: 'I tell Halloran the truth and ask him to open the gate for the scout.',
   },
-  { intent: { kind: 'move', entity: 'player', to: { x: 6, y: 5 } } },
-  {
-    intent: { kind: 'attack', attacker: 'player', target: GUARD_ID, ability: 'longsword' },
-    text: 'Out of patience, I draw and swing at the warden.',
-  },
-  { intent: { kind: 'end_turn', entity: 'player' } },
-  { intent: { kind: 'attack', attacker: 'player', target: GUARD_ID, ability: 'longsword' } },
-  { intent: { kind: 'end_turn', entity: 'player' } },
-];
+};
+
+const PLAYER: EntityId = 'player';
+
+function positionOf(snapshot: Snapshot, id: EntityId): { x: number; y: number } | null {
+  const p = snapshot.entities[id]?.components.position;
+  return p ? { x: p.x, y: p.y } : null;
+}
+
+function chebyshev(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+}
+
+/** Alive entities the game master plays, nearest first. Who the player can talk to, or hit. */
+function gmEntities(snapshot: Snapshot): EntityId[] {
+  const me = positionOf(snapshot, PLAYER);
+  return Object.values(snapshot.entities)
+    .filter(
+      (e) =>
+        e.components.brain?.policy === GM_BRAIN_POLICY &&
+        !e.components.health?.conditions.includes('dead') &&
+        e.components.position,
+    )
+    .sort((a, b) => {
+      if (!me) return 0;
+      const pa = positionOf(snapshot, a.id)!;
+      const pb = positionOf(snapshot, b.id)!;
+      return chebyshev(me, pa) - chebyshev(me, pb);
+    })
+    .map((e) => e.id);
+}
+
+/**
+ * Every tile on the map, ordered by how close it is to `goal` — the move candidates, best first.
+ * Which of them are walkable, unoccupied and inside this turn's movement is the engine's answer,
+ * not this function's, so the player simply walks as far toward the gate as the rules allow.
+ */
+function tilesToward(snapshot: Snapshot, goal: { x: number; y: number }): Intent[] {
+  const map = Object.values(snapshot.world.maps)[0];
+  if (!map) return [];
+  const tiles: { x: number; y: number }[] = [];
+  for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) tiles.push({ x, y });
+  return tiles
+    .sort((a, b) => chebyshev(a, goal) - chebyshev(b, goal))
+    .map((to) => ({ kind: 'move', entity: PLAYER, to }) satisfies Intent);
+}
+
+/** Candidates for one beat, best first. The engine picks; this only says what the player wants. */
+function candidates(beat: Beat, snapshot: Snapshot): Intent[] {
+  const speech = SPEECH[beat];
+  const nearby = gmEntities(snapshot);
+  const guard = snapshot.entities[GUARD_ID] ? GUARD_ID : nearby[0];
+  const me = positionOf(snapshot, PLAYER);
+  const say = (to: EntityId | null, text: string): Intent => ({
+    kind: 'say',
+    speaker: PLAYER,
+    text,
+    to,
+  });
+  // Something the player can always do, so a turn never fails to commit: speaking needs only a
+  // living speaker, and the engine has never refused it for anything else.
+  const fallback: Intent[] = [
+    ...nearby.map((id) => say(id, 'I am still here, and the scout is still bleeding.')),
+    say(null, 'I am still here, and the scout is still bleeding.'),
+  ];
+
+  if (speech && snapshot.entities[speech.to]) return [say(speech.to, speech.line), ...fallback];
+
+  if (beat === 'approach') {
+    const goal = guard ? positionOf(snapshot, guard) : null;
+    return goal ? [...tilesToward(snapshot, goal), ...fallback] : fallback;
+  }
+
+  // fight. Hit whoever is in reach; if nobody is, close the distance; if the encounter is running
+  // and there is nothing to do, end the turn and let the game master have it.
+  const adjacent = me ? nearby.filter((id) => chebyshev(me, positionOf(snapshot, id)!) <= 1) : [];
+  const target = positionOf(snapshot, nearby[0] ?? PLAYER);
+  return [
+    ...adjacent.map(
+      (id) =>
+        ({ kind: 'attack', attacker: PLAYER, target: id, ability: 'longsword' }) satisfies Intent,
+    ),
+    { kind: 'end_turn', entity: PLAYER },
+    ...(target ? tilesToward(snapshot, target) : []),
+    ...fallback,
+  ];
+}
+
+/**
+ * The first candidate the engine accepts, resolved on a throwaway engine built from the live
+ * snapshot. Exactly what a UI does when it greys out the actions you cannot take, and exactly what
+ * preview does — the real engine is never asked, so choosing costs the world nothing.
+ */
+function choose(beat: Beat, snapshot: Snapshot): ScriptedTurn {
+  for (const intent of candidates(beat, snapshot)) {
+    const probe = createEngine(structuredClone(snapshot), { seed: GATEHOUSE_SEED });
+    if (probe.apply(intent).ok) {
+      const speech = SPEECH[beat];
+      return speech && intent.kind === 'say' ? { intent, text: speech.text } : { intent };
+    }
+  }
+  throw new Error(`no legal intent for beat ${beat}`);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Suite 1b — the policy itself, with no model in the loop. Free, and it runs in `check`.
+// ---------------------------------------------------------------------------------------------
+
+describe('the playthrough policy', () => {
+  it('walks the player to the gate and starts a fight, from the gatehouse start', () => {
+    // No game master: nobody moves but the player, which is the easy case. It is here to catch the
+    // harness breaking — a beat with no legal candidate, or an approach that never arrives — rather
+    // than to stand in for the live run, which is the only thing that proves the loop works.
+    const engine = createEngine(gatehouseSnapshot(), { seed: GATEHOUSE_SEED });
+    const kinds: string[] = [];
+    for (const beat of BEATS) {
+      const { intent } = choose(beat, engine.snapshot());
+      const verdict = engine.apply(intent);
+      expect(verdict.ok, `${beat}: ${verdict.reason ?? ''}`).toBe(true);
+      kinds.push(intent.kind);
+    }
+    expect(kinds).toHaveLength(BEATS.length);
+    expect(kinds).toContain('say');
+    expect(kinds).toContain('move');
+    // The encounter has to start, or the game master never takes an NPC turn and `attack` and
+    // `end_turn` never appear in the evidence at all.
+    expect(kinds).toContain('attack');
+    expect(engine.snapshot().initiative).not.toBeNull();
+  });
+});
 
 // ---------------------------------------------------------------------------------------------
 // Suite 2 — the live playthrough. Skipped without a key; CI has none.
@@ -173,8 +322,8 @@ const PLAYTHROUGH: ScriptedTurn[] = [
 
 const live = Boolean(process.env['ANTHROPIC_API_KEY'] ?? process.env['ANTHROPIC_AUTH_TOKEN']);
 
-/** The turns the live run actually plays. Shortened only when smoke-testing the harness itself. */
-const TURNS = PLAYTHROUGH.slice(0, Number(process.env['DELIBERATE_TURNS'] ?? PLAYTHROUGH.length));
+/** The beats the live run actually plays. Shortened only when smoke-testing the harness itself. */
+const TURNS = BEATS.slice(0, Number(process.env['DELIBERATE_TURNS'] ?? BEATS.length));
 
 /**
  * Phase budgets for the live run. The blueprint targets preview <= 8 s and resolve <= 6 s; a real
@@ -251,11 +400,13 @@ describe.skipIf(!live)('M1 acceptance: ten-turn playthrough against the live mod
       client.send({ type: 'join', room: app.room.id, protocol: PROTOCOL_VERSION });
       expect((await client.next()).type).toBe('snapshot');
 
-      for (const [index, scripted] of TURNS.entries()) {
+      for (const [index, beat] of TURNS.entries()) {
         const turn = app.room.turn();
         expect(turn).toBe(index);
 
         const hashBeforePreview = app.room.engine.hash();
+        // Composed against the world as it is now, not as it was when this file was written.
+        const scripted = choose(beat, app.room.engine.snapshot());
         const previewAt = Date.now();
         client.send({
           type: 'preview_request',

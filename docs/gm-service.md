@@ -307,9 +307,13 @@ The assertions are made **against the recording**, never against the code that w
    player-readable reason, no diffs, and the hash it started with.
 3. _It replays._ `replay` is the function `pnpm replay` runs.
 
-The first suite replays **committed** evidence — `recordings/m1-acceptance.jsonl`, written by a real
-playthrough against `claude-opus-5` — so `pnpm check` re-checks the milestone on a machine with no
-credentials, no Python and no browser. The second regenerates it: it starts this service against the
+The first suite replays **committed** evidence — `packages/server/src/fixtures/m1-acceptance.jsonl`,
+written by a real playthrough against `claude-opus-5` — so `pnpm check` re-checks the milestone on a
+machine with no credentials, no Python and no browser. It sits beside the test rather than in
+`recordings/`, which is gitignored: a recording that never reaches CI proves nothing there. It is
+also the first entry in the bank ALE-21 (M3's replay-based regression suite) will grow — replaying
+it needs the engine and nothing else, so a later change to the rules, the hash or the diff set fails
+immediately against a real model-driven session. The second regenerates it: it starts this service against the
 real API, plays ten turns over a real WebSocket, and asserts the same three things about the JSONL
 it just wrote. That one is skipped without `ANTHROPIC_API_KEY`, because the required `check` job
 must never depend on a model.
@@ -317,7 +321,7 @@ must never depend on a model.
 ```sh
 source ~/.deliberate-env
 pnpm --filter @deliberate/server exec vitest run src/acceptance.test.ts   # spends money
-pnpm replay recordings/m1-acceptance.jsonl                               # free
+pnpm replay packages/server/src/fixtures/m1-acceptance.jsonl             # free
 ```
 
 Ten turns of a well-behaved game master need not contain an illegal move, and the claim that a
