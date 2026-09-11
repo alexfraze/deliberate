@@ -13,3 +13,11 @@ recordings/*.jsonl
 test-results/
 playwright-report/
 e2e/.recordings/
+
+# Python (services/gm)
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
