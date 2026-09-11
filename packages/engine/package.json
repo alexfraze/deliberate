@@ -19,6 +19,7 @@
     "build": "tsc -p tsconfig.build.json",
     "replay": "node dist/recorder/cli.js replay",
     "test": "vitest run",
+    "meters": "node dist/recorder/cli.js meters",
     "bank": "node dist/recorder/cli.js bank"
   },
   "dependencies": {

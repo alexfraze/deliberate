@@ -21,6 +21,13 @@ import {
   type CacheStats,
 } from './cache.js';
 import { LIVE_ENGINE_TOKEN, type EngineRegistry } from './engines.js';
+import {
+  createMeters,
+  type Meters,
+  type MeterSummary,
+  type TurnMeter,
+  type TurnMeters,
+} from './meters.js';
 import { EMPTY_MEMORY, type GmPhase, type GmService, type MemoryBlocks } from './service.js';
 import { executeGmToolRequest, type GmToolDeps } from './tool.js';
 
@@ -88,6 +95,11 @@ export interface GmLoopOptions {
   memory?: MemoryBlocks;
   /** Somewhere to note a GM failure. Defaults to nothing; `buildApp` passes the Fastify logger. */
   log?: (message: string) => void;
+  /**
+   * Called once per player turn with what it cost and how long it took (ALE-24). `buildApp` sends
+   * it to the recorder, so the meters end up in the JSONL beside the turns they measured.
+   */
+  onMeter?: (meter: TurnMeters) => void;
 }
 
 export interface GmLoop {
@@ -110,6 +122,8 @@ export interface GmLoop {
   speculate(intents: (Intent | null)[]): Promise<void>;
   /** Cache hits, misses and size, for the meters and for tests. */
   cache(): { preview: CacheStats; decisions: CacheStats };
+  /** This session so far: p50/p95 after GO and cost per turn (ALE-24). */
+  meters(): MeterSummary;
 }
 
 export function createGmLoop(options: GmLoopOptions): GmLoop {
@@ -119,7 +133,9 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   const narrateBudget = options.narrateBudgetMs ?? NARRATE_BUDGET_MS;
   const maxNpcTurns = options.maxNpcTurns ?? MAX_NPC_TURNS;
   const log = options.log ?? (() => {});
+  const onMeter = options.onMeter ?? ((): void => {});
   const liveDeps: GmToolDeps = { registry, room };
+  const meters: Meters = createMeters();
   const cacheSize = options.cacheSize ?? DEFAULT_CACHE_SIZE;
   const caching = cacheSize > 0;
   const previews = createTurnCache<CachedPreview>(cacheSize);
@@ -132,6 +148,13 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   let busy = false;
   /** Set when a real frame arrives, so speculation stops between intents instead of racing it. */
   let abandonSpeculation = false;
+  /**
+   * The turn being metered. Opened by whatever the player does first and closed by GO, so the
+   * previews they discarded before committing are counted against the turn they were deliberating
+   * over — that money was spent whether or not they used the answer.
+   */
+  let turnMeter: TurnMeter | null = null;
+  const meter = (): TurnMeter => (turnMeter ??= meters.open(room.turn()));
 
   const refuse = (socket: RoomSocket, reason: string): void => room.refuse(socket, reason);
 
@@ -147,8 +170,16 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     },
     budgetMs: number,
     onChunk?: (chunk: string) => void,
-  ): Promise<{ narration: string; calls: GmToolCall[]; diffs: Diff[]; failed: string | null }> => {
-    if (!gm) return { narration: '', calls: [], diffs: [], failed: 'no game master is configured' };
+  ): Promise<{
+    narration: string;
+    calls: GmToolCall[];
+    diffs: Diff[];
+    failed: string | null;
+    /** What the model charged for this call, for the meters (ALE-24). Absent from the stub. */
+    usage: Record<string, number> | undefined;
+  }> => {
+    const nothing = { narration: '', calls: [], diffs: [], usage: undefined };
+    if (!gm) return { ...nothing, failed: 'no game master is configured' };
     try {
       const response = await gm.turn(
         {
@@ -174,11 +205,11 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
           calls.push({ name: entry.tool, args: entry.input ?? {} });
         }
       }
-      return { narration: response.narration, calls, diffs, failed: null };
+      return { narration: response.narration, calls, diffs, failed: null, usage: response.usage };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       log(`gm ${phase} failed: ${reason}`);
-      return { narration: '', calls: [], diffs: [], failed: reason };
+      return { ...nothing, failed: reason };
     }
   };
 
@@ -216,14 +247,19 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   const computePreview = async (
     intent: Intent | null,
     text: string | null,
+    phase: 'preview' | 'speculate' = 'preview',
   ): Promise<CachedPreview | { refused: string }> => {
+    const startedAt = Date.now();
     const key = previewKey(room.engine.hash(), intent, text);
     if (caching) {
       const hit = previews.get(key);
       // A hit costs no clone, no HTTP hop and no model call: the world is bit-for-bit the world
       // this answer was computed on, and GO will re-validate it against the real engine either
       // way. `stateSummary` is derived from that same state, so there is nothing left to ask.
-      if (hit) return hit;
+      if (hit) {
+        meter().record(phase, { startedAt, endedAt: Date.now(), cached: true });
+        return hit;
+      }
     }
 
     const clone = registry.clone();
@@ -261,6 +297,12 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       // A turn the game master never answered is not memoised: a timeout is a fact about one
       // moment, and caching it would make a blip permanent for as long as the world stands still.
       if (caching && !answer.failed) previews.set(key, entry);
+      meter().record(phase, {
+        startedAt,
+        endedAt: Date.now(),
+        usage: answer.usage,
+        failed: answer.failed,
+      });
       return entry;
     } finally {
       // The clone dies with the preview. Nothing can act on it afterwards, so a late tool call
@@ -309,6 +351,9 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       return;
     }
 
+    // GO's own work: re-validating the player's intent and every previewed call against the real
+    // engine. The blueprint budgets it under 100 ms because it is pure engine, no model.
+    const startedAt = Date.now();
     if (staged.intent) {
       const verdict = room.commit(staged.intent);
       if (!verdict.ok) {
@@ -319,9 +364,13 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     }
 
     for (const call of staged.calls) if (!replayCall(call)) break;
+    meter().record('validate', { startedAt, endedAt: Date.now() });
 
     await resolve();
     await narrate(staged);
+    // The turn is over and idle: what it cost is settled, and goes to the recording (ALE-24).
+    onMeter(meter().finish());
+    turnMeter = null;
   };
 
   // -------------------------------------------------------------------------------------------
@@ -341,10 +390,12 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
         // and rolls its own dice afresh. A cached decision can therefore fail where the first one
         // succeeded, which is correct: the cache remembers what an NPC decided to try, never what
         // the world let it do.
+        const startedAt = Date.now();
         const key = decisionKey(room.engine.hash(), acting);
         const hit = caching ? decisions.get(key) : undefined;
         if (hit) {
           for (const call of hit) if (!replayCall(call)) break;
+          meter().record('resolve', { startedAt, endedAt: Date.now(), cached: true });
         } else {
           const answer = await ask(
             'resolve',
@@ -352,6 +403,12 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
             resolveBudget,
           );
           if (caching && !answer.failed) decisions.set(key, answer.calls);
+          meter().record('resolve', {
+            startedAt,
+            endedAt: Date.now(),
+            usage: answer.usage,
+            failed: answer.failed,
+          });
         }
       }
 
@@ -377,6 +434,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   const narrate = async (staged: PendingPreview): Promise<void> => {
     if (!gm) return;
     const turn = room.turn();
+    const startedAt = Date.now();
     const answer = await ask(
       'narrate',
       {
@@ -388,6 +446,12 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       narrateBudget,
       (chunk) => room.broadcast({ type: 'narration', room: room.id, turn, chunk, done: false }),
     );
+    meter().record('narrate', {
+      startedAt,
+      endedAt: Date.now(),
+      usage: answer.usage,
+      failed: answer.failed,
+    });
     if (answer.failed) return;
     room.broadcast({ type: 'narration', room: room.id, turn, chunk: '', done: true });
   };
@@ -426,7 +490,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       .then(async () => {
         for (const intent of intents) {
           if (abandonSpeculation || busy) return;
-          await computePreview(intent, null);
+          await computePreview(intent, null, 'speculate');
         }
       })
       .catch((error: unknown) => {
@@ -453,6 +517,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     memory: () => memory,
     speculate,
     cache: () => ({ preview: previews.stats(), decisions: decisions.stats() }),
+    meters: () => meters.summary(),
   };
 }
 

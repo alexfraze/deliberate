@@ -4,8 +4,9 @@ import { argv, cwd, env, exit, stderr, stdout } from 'node:process';
 import { createEngine } from '../rules/index.js';
 import { formatBankReport, runBank, type BankReport } from './bank.js';
 import { loadBank, readLines } from './fs-sink.js';
-import { RecordingError } from './jsonl.js';
+import { parseLine, RecordingError } from './jsonl.js';
 import { replay, type ReplayReport } from './replay.js';
+import { formatSummary, summarize } from './summary.js';
 
 /**
  * `replay <file.jsonl>` — re-runs a recorded session through a fresh engine and exits non-zero if
@@ -16,14 +17,20 @@ import { replay, type ReplayReport } from './replay.js';
  * numbers: per-session pass/fail, turns, verdict rejection rate, turns to objective, and tokens
  * where the recording carries them. Defaults to `recordings/bank`. Needs no key and no network.
  *
+ * `meters <file.jsonl>` — prints the session's cost and latency summary (ALE-24): p50/p95 after
+ * GO, what a turn cost, and how much of the prompt was served from the model's cache. Same file,
+ * same engine, no server and no key — the evidence for M3's "p50 after GO < 10 s" is read back
+ * out of the recording rather than trusted from whatever printed it at the time.
+ *
  * From the repo root, after `pnpm build`:
  *   pnpm replay recordings/bank/<file>.jsonl
+ *   pnpm meters recordings/<file>.jsonl
  *   pnpm bank
  * Straight from source, borrowing the server's tsx:
  *   pnpm --filter @deliberate/server exec tsx ../engine/src/recorder/cli.ts replay <file>.jsonl
  */
 
-const USAGE = 'usage: cli.ts replay <file.jsonl> | cli.ts bank [dir]';
+const USAGE = 'usage: cli.ts replay|meters <file.jsonl> | cli.ts bank [dir]';
 
 /** Where the bank lives, relative to the repo root. */
 export const DEFAULT_BANK_DIR = 'recordings/bank';
@@ -38,11 +45,22 @@ export function main(args: readonly string[], out: CliOut = stdout, err: CliOut 
   // pnpm runs scripts with the package as the cwd; INIT_CWD is where the human actually stood.
   const from = env['INIT_CWD'] ?? cwd();
   if (command === 'bank') return bank(resolve(from, file ?? DEFAULT_BANK_DIR), out, err);
-  if (command !== 'replay' || !file) {
+  if ((command !== 'replay' && command !== 'meters') || !file) {
     err.write(`${USAGE}\n`);
     return 2;
   }
   const path = resolve(from, file);
+
+  if (command === 'meters') {
+    try {
+      const lines = readLines(path).map((line, i) => parseLine(line, i + 1));
+      out.write(`${path}\n${formatSummary(summarize(lines))}\n`);
+    } catch (e) {
+      err.write(`${path}: ${e instanceof RecordingError ? e.message : String(e)}\n`);
+      return 2;
+    }
+    return 0;
+  }
 
   let report: ReplayReport;
   try {

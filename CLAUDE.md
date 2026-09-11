@@ -47,6 +47,7 @@ pnpm dev:server             # http://127.0.0.1:8787, GET /healthz, WS /ws
 pnpm dev:client             # http://127.0.0.1:5173, proxies /ws to the server
 pnpm e2e                    # Playwright acceptance run (needs a browser; not part of `check`)
 pnpm replay <file.jsonl>    # Re-run a recorded session and check every state hash
+pnpm meters <file.jsonl>    # Session summary: p50/p95 after GO, tokens and dollars per turn
 pnpm bank                   # Replay the whole regression bank (docs/regression-bank.md)
 ```
 

@@ -3,6 +3,7 @@ import {
   PROTOCOL_VERSION,
   type Entity,
   type Intent,
+  type RecordedMeter,
   type RecordedTurn,
   type RecordingHeader,
   type RoomId,
@@ -65,6 +66,13 @@ export interface Recorder {
    * applied; the current engine hash is taken as `hashAfter`.
    */
   record(intent: Intent, verdict: Verdict, hashBefore: StateHash, meta?: TurnMeta): RecordedTurn;
+  /**
+   * Appends one `meter` line: what a player turn cost and how long it took (ALE-24). Separate from
+   * `record` because the two are known at different moments — a commit line is written the instant
+   * the engine accepts the intent, and the turn's cost is only settled once narration is done.
+   * Meters change no state, so this does not advance `turns` and `replay` steps over them.
+   */
+  meter(entry: Omit<RecordedMeter, 'line'>): RecordedMeter;
   /** Closes the sink. Further calls throw. */
   close(): void;
 }
@@ -131,6 +139,12 @@ export function createRecorder(engine: Engine, options: RecorderOptions): Record
       return verdict;
     },
     record,
+    meter(entry) {
+      if (closed) throw new RecorderClosedError('recorder is closed');
+      const line: RecordedMeter = { line: 'meter', ...entry };
+      sink.write(encodeLine(line));
+      return line;
+    },
     close() {
       if (closed) return;
       closed = true;

@@ -36,6 +36,18 @@ export {
   type PendingPreview,
 } from './loop.js';
 export {
+  createMeters,
+  tokensFrom,
+  usdFor,
+  PRICE_PER_MTOK,
+  type MeteredPhase,
+  type Meters,
+  type PhaseReport,
+  type TokenCounts,
+  type TurnMeter,
+  type TurnMeters,
+} from './meters.js';
+export {
   httpGmService,
   GmServiceError,
   DEFAULT_GM_TIMEOUT_MS,
