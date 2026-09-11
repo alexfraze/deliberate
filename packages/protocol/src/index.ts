@@ -1,3 +1,5 @@
+import gmToolContract from '@deliberate/contracts/gm-tools.json' with { type: 'json' };
+
 /**
  * @deliberate/protocol — shared contracts.
  *
@@ -294,6 +296,32 @@ export interface FacingChanged {
   facing: Direction8;
 }
 
+/**
+ * One entity's feeling toward another moved. Absolute like every other diff: `value` is where the
+ * number landed after clamping to [-100, 100], not the delta that was asked for. `reason` is the
+ * GM's one-line justification, carried so the verified ledger can quote why the world changed.
+ * Added in ALE-31: `set_disposition` mutates state, so it needs a diff or `apply(snapshot, diffs)`
+ * stops reproducing the engine.
+ */
+export interface DispositionChanged {
+  type: 'DispositionChanged';
+  entity: EntityId;
+  toward: EntityId;
+  /** Disposition after the change, in [-100, 100]. */
+  value: number;
+  reason: string;
+}
+
+/**
+ * A quest moved to a later step. Absolute: `step` is the index the quest is on now. Added in
+ * ALE-31 for the same reason as `DispositionChanged`.
+ */
+export interface QuestAdvanced {
+  type: 'QuestAdvanced';
+  quest: QuestId;
+  step: number;
+}
+
 export type Diff =
   | EntityMoved
   | DamageApplied
@@ -303,7 +331,9 @@ export type Diff =
   | EntitySpawned
   | TurnAdvanced
   | EconomySpent
-  | FacingChanged;
+  | FacingChanged
+  | DispositionChanged
+  | QuestAdvanced;
 
 export type DiffType = Diff['type'];
 
@@ -317,6 +347,8 @@ export const DIFF_TYPES: readonly DiffType[] = [
   'TurnAdvanced',
   'EconomySpent',
   'FacingChanged',
+  'DispositionChanged',
+  'QuestAdvanced',
 ] as const;
 
 // ---------------------------------------------------------------------------------------------
@@ -342,8 +374,85 @@ export interface EndTurnIntent {
   entity: EntityId;
 }
 
-/** M0 intents. M1 adds `say` and free text (quoted as data, never as instruction). */
-export type Intent = MoveIntent | AttackIntent | EndTurnIntent;
+/**
+ * Cast an attack cantrip. Resolves through the same validated pipeline as a weapon attack —
+ * range, line of sight, action economy, a seeded attack roll — with the spell in place of the
+ * weapon. Added in ALE-31 for the GM's `cast` tool.
+ */
+export interface CastIntent {
+  kind: 'cast';
+  caster: EntityId;
+  /** Spell key from the trimmed cantrip table. */
+  spell: string;
+  target: EntityId;
+}
+
+/**
+ * An entity speaks. The one intent that mutates nothing: it emits a `DialogueLine` and leaves the
+ * state hash exactly where it was. It is still validated (an unknown or dead speaker is
+ * rejected), because the GM must not be able to put words in a corpse's mouth. Added in ALE-31.
+ */
+export interface SayIntent {
+  kind: 'say';
+  speaker: EntityId;
+  text: string;
+  /** Who is addressed; `null` speaks to the room. */
+  to: EntityId | null;
+}
+
+/** Move `entity`'s disposition toward another by `delta`, clamped to [-100, 100]. ALE-31. */
+export interface SetDispositionIntent {
+  kind: 'set_disposition';
+  entity: EntityId;
+  toward: EntityId;
+  delta: number;
+  /** Why, in one short phrase. Travels with the diff into the verified ledger. */
+  reason: string;
+}
+
+/** Place a new entity built from a known template. ALE-31. */
+export interface SpawnIntent {
+  kind: 'spawn';
+  /** Key into the template registry the engine was configured with (`EngineOptions.templates`). */
+  template: string;
+  at: Tile;
+  /** Map to place it on; `null` means the only loaded map. */
+  map: MapId | null;
+  /** Id for the new entity; `null` derives a unique one from the template key. */
+  id: EntityId | null;
+}
+
+/** Set a world flag. ALE-31. */
+export interface SetFlagIntent {
+  kind: 'set_flag';
+  key: string;
+  value: FlagValue;
+}
+
+/** Move a quest strictly forward to `step`. ALE-31. */
+export interface AdvanceQuestIntent {
+  kind: 'advance_quest';
+  quest: QuestId;
+  step: number;
+}
+
+/**
+ * Everything the engine can be asked to do. M0 shipped `move`, `attack` and `end_turn`; ALE-31
+ * added the rest for the GM's mutation tools. The addition is additive: each new kind is a new
+ * member of the union, no existing member changed, and every GM mutation tool maps onto exactly
+ * one of these — a tool call is not a second way into the store, it is the same validated path
+ * the player's UI uses.
+ */
+export type Intent =
+  | MoveIntent
+  | AttackIntent
+  | EndTurnIntent
+  | CastIntent
+  | SayIntent
+  | SetDispositionIntent
+  | SpawnIntent
+  | SetFlagIntent
+  | AdvanceQuestIntent;
 
 export type IntentKind = Intent['kind'];
 
@@ -459,3 +568,165 @@ export interface RecordedTurn {
 }
 
 export type RecordingLine = RecordingHeader | RecordedTurn;
+
+// ---------------------------------------------------------------------------------------------
+// GM tool contract (ALE-31)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The GM tool contract (ALE-31).
+ *
+ * `contracts/gm-tools.json` is the single source of truth for the tool schemas: this module
+ * imports it, the Python GM service loads the same file and passes the entries straight to the
+ * Anthropic `tools` parameter. There is no second copy and no codegen step, so the two languages
+ * cannot drift (decision 2 of docs/m1-swarm.md).
+ *
+ * What lives here is the typing over that JSON plus the call/result envelopes. The engine
+ * (`@deliberate/engine`, `src/gm/`) validates an incoming call against the schema, maps it to
+ * exactly one `Intent`, and returns the engine's own `Verdict`. A GM tool call is not a new
+ * mutation path — it is the same validated path the player's UI already uses.
+ */
+
+// ---------------------------------------------------------------------------------------------
+// Tool definitions
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The subset of JSON Schema the contract uses, which is also the subset the engine's argument
+ * validator understands: objects with fixed properties, primitives, enums, bounds, and unions
+ * expressed as a list of type names (`["string", "null"]` for a nullable argument).
+ */
+export interface JsonSchema {
+  type?: string | string[];
+  description?: string;
+  enum?: readonly (string | number | boolean | null)[];
+  properties?: Readonly<Record<string, JsonSchema>>;
+  required?: readonly string[];
+  additionalProperties?: boolean;
+  items?: JsonSchema;
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+}
+
+/**
+ * One entry of the contract. `name`, `description` and `input_schema` are the three keys the
+ * Anthropic `tools` parameter takes; `kind` is contract metadata that loaders drop when building
+ * that parameter.
+ *
+ * `kind` is the free-vs-validated distinction, and it lives in the file so that neither language
+ * has to keep a hardcoded list of which tools mutate. Adding a tool is then a one-file change.
+ */
+export interface GmToolDefinition {
+  name: string;
+  /** `query`: free, read-only, never consumes the RNG. `mutation`: maps onto exactly one Intent. */
+  kind: 'query' | 'mutation';
+  description: string;
+  input_schema: JsonSchema;
+}
+
+/**
+ * Query tools: free, read-only, and never consume the seeded RNG. `roll_preview` reports odds
+ * computed from the rules rather than rolling, so asking for odds cannot change the next roll.
+ */
+export const GM_QUERY_TOOL_NAMES = [
+  'get_state',
+  'legal_actions',
+  'line_of_sight',
+  'path',
+  'recall',
+  'roll_preview',
+] as const;
+
+/** Mutation tools. Each maps onto exactly one `Intent` and is validated by the engine. */
+export const GM_MUTATION_TOOL_NAMES = [
+  'move',
+  'attack',
+  'cast',
+  'say',
+  'set_disposition',
+  'spawn',
+  'set_flag',
+  'advance_quest',
+  'end_turn',
+] as const;
+
+export type GmQueryToolName = (typeof GM_QUERY_TOOL_NAMES)[number];
+export type GmMutationToolName = (typeof GM_MUTATION_TOOL_NAMES)[number];
+export type GmToolName = GmQueryToolName | GmMutationToolName;
+
+/**
+ * The parsed contract. The cast is the one place the JSON meets the type system; `gm.test.ts`
+ * asserts the file really has this shape and that its names match the tuples above, so the cast
+ * cannot quietly become a lie.
+ */
+const contract = gmToolContract as unknown as {
+  version: number;
+  tools: readonly GmToolDefinition[];
+};
+
+export const GM_CONTRACT_VERSION: number = contract.version;
+
+/**
+ * Every tool in file order — queries first, then mutations. This is the array the model sees, and
+ * the order is the head of the cached prompt prefix, so it must stay stable.
+ */
+export const GM_TOOLS: readonly GmToolDefinition[] = contract.tools;
+
+export const GM_QUERY_TOOLS: readonly GmToolDefinition[] = GM_TOOLS.filter(
+  (t) => t.kind === 'query',
+);
+export const GM_MUTATION_TOOLS: readonly GmToolDefinition[] = GM_TOOLS.filter(
+  (t) => t.kind === 'mutation',
+);
+
+export function gmTool(name: string): GmToolDefinition | undefined {
+  return GM_TOOLS.find((t) => t.name === name);
+}
+
+/**
+ * Both guards answer from the contract's own `kind`, never from a list kept alongside it. The
+ * name tuples above exist for the literal types; `gm.test.ts` asserts they still agree with the
+ * file, so a tool added to the JSON alone fails the build rather than going quietly unhandled.
+ */
+export function isGmQueryTool(name: string): name is GmQueryToolName {
+  return gmTool(name)?.kind === 'query';
+}
+
+export function isGmMutationTool(name: string): name is GmMutationToolName {
+  return gmTool(name)?.kind === 'mutation';
+}
+
+// ---------------------------------------------------------------------------------------------
+// Call and result envelopes
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * One tool call from the GM. `args` is whatever the model produced: untrusted until the engine
+ * has checked it against `input_schema`. `id` is the model's tool_use id when there is one, so
+ * the service can pair results back up.
+ */
+export interface GmToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  id?: string;
+}
+
+/**
+ * The answer to one tool call, shaped like the engine's `Verdict` ({ok, reason, diff}) so a
+ * mutation's verdict passes through unchanged and a recording line needs no translation.
+ * Queries answer `ok: true` with an empty `diff` and their payload in `data`; mutations answer
+ * with the engine's diffs and no `data`. A rejection carries a reason a player could read and,
+ * by the engine's contract, left the world untouched.
+ */
+export type GmToolResult =
+  | { ok: true; reason?: undefined; diff: Diff[]; data?: unknown }
+  | { ok: false; reason: string; diff: []; data?: undefined };
+
+/** A batch of calls stops at the first rejection, so `results` may be shorter than `calls`. */
+export interface GmBatchResult {
+  results: GmToolResult[];
+  /** Index of the call that was rejected, or null when every call succeeded. */
+  rejectedAt: number | null;
+}

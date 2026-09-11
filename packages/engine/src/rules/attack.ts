@@ -104,7 +104,8 @@ export function resolveAttack(rng: Rng, ctx: AttackContext): AttackResult {
   let damage = 0;
   if (hit) {
     const dice = rollDice(rng, ctx.weapon.damage, critical ? 2 : 1);
-    const damageMod = ctx.offhand ? Math.min(mod, 0) : mod;
+    // Cantrips add no ability modifier; an off-hand weapon adds only a negative one.
+    const damageMod = ctx.weapon.noAbilityDamage ? 0 : ctx.offhand ? Math.min(mod, 0) : mod;
     damage = Math.max(0, dice + damageMod);
   }
   return { mode, sources, natural, rolled, attackBonus, total, targetAc, hit, critical, damage };

@@ -3,6 +3,7 @@ export {
   conditionSet,
   damageApplied,
   dialogueLine,
+  dispositionChanged,
   economySpent,
   entityMoved,
   entitySpawned,
@@ -11,5 +12,6 @@ export {
   flagSet,
   healthDiffs,
   movedDiff,
+  questAdvanced,
   turnAdvanced,
 } from './emit.js';

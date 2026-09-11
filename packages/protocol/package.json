@@ -14,5 +14,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@deliberate/contracts": "workspace:*"
   }
 }

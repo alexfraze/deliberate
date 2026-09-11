@@ -1,4 +1,4 @@
-import type { Intent, Seed, Snapshot, StateHash, Verdict } from '@deliberate/protocol';
+import type { Entity, Intent, Seed, Snapshot, StateHash, Verdict } from '@deliberate/protocol';
 
 /**
  * The seam between the engine and everything else. The server (ALE-11) drives a room through
@@ -18,6 +18,12 @@ export interface Engine {
 export interface EngineOptions {
   /** Drives every roll. Same seed and same intents replay to the same hashes. */
   seed: Seed;
+  /**
+   * Entity templates the `spawn` intent may instantiate, keyed by template id (ALE-31). The
+   * engine is I/O free, so whoever constructs it hands these in — the server loads them from
+   * `content/npcs/`. Omitted means no templates, and every `spawn` is rejected.
+   */
+  templates?: Readonly<Record<string, Entity>>;
 }
 
 /** Signature the engine package exports once ALE-8 lands. Declared here so consumers can type it. */

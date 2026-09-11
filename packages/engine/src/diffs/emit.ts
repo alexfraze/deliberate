@@ -5,6 +5,7 @@ import type {
   Diff,
   DialogueLine,
   Direction8,
+  DispositionChanged,
   EconomySpent,
   Entity,
   EntityId,
@@ -16,6 +17,8 @@ import type {
   Health,
   InitiativeState,
   Position,
+  QuestAdvanced,
+  QuestId,
   Tile,
   TurnAdvanced,
   TurnEconomy,
@@ -83,6 +86,19 @@ export function economySpent(entity: EntityId, turn: TurnEconomy): EconomySpent 
 
 export function facingChanged(entity: EntityId, facing: Direction8): FacingChanged {
   return { type: 'FacingChanged', entity, facing };
+}
+
+export function dispositionChanged(
+  entity: EntityId,
+  toward: EntityId,
+  value: number,
+  reason: string,
+): DispositionChanged {
+  return { type: 'DispositionChanged', entity, toward, value, reason };
+}
+
+export function questAdvanced(quest: QuestId, step: number): QuestAdvanced {
+  return { type: 'QuestAdvanced', quest, step };
 }
 
 // ---------------------------------------------------------------------------------------------

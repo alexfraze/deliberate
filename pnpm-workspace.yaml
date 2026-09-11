@@ -1,4 +1,5 @@
 packages:
+  - contracts
   - packages/*
   # ALE-16: authored game content, loadable into a Snapshot. Data, not behaviour.
   - content/*
