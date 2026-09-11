@@ -10,6 +10,7 @@
       "Bash(curl:*)",
       "mcp__github",
       "mcp__Linear",
+      "mcp__d1df4d53-e459-42ca-9897-3444b2dbe0b5",
       "WebFetch(domain:linear.app)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:threejs.org)",
