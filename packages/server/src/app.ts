@@ -151,6 +151,11 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   // One registry per room. It holds the real engine and mints clones for previews; `/gm/tool`
   // resolves an `engine_token` through it, and nothing else can reach the live engine.
   const registry = createEngineRegistry({ engine, seed, templates: scene.templates });
+  // Created before the loop so the loop's meters have somewhere to go. It subscribes to the room
+  // and nothing else, so the ordering costs nothing.
+  const recording = opts.recordings
+    ? recordSession(room, { dir: opts.recordings, seed, templates: scene.templates })
+    : null;
   const gm = createGmLoop({
     room,
     registry,
@@ -161,13 +166,13 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     ...(opts.budgets?.narrate ? { narrateBudgetMs: opts.budgets.narrate } : {}),
     ...(opts.cacheSize === undefined ? {} : { cacheSize: opts.cacheSize }),
     log: (message) => app.log.warn(message),
+    // One `meter` line per turn (ALE-24), so what a turn cost is re-readable from the recording
+    // months later instead of trusted from whatever printed it at the time.
+    onMeter: (entry) => recording?.recorder.meter(entry),
   });
   app.decorate('gm', gm);
   room.setGmFrames((socket, message) => gm.handle(socket, message));
 
-  const recording = opts.recordings
-    ? recordSession(room, { dir: opts.recordings, seed, templates: scene.templates })
-    : null;
   app.decorate('recording', recording);
   app.addHook('onClose', () => recording?.close());
 
@@ -193,6 +198,9 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     recording: recording?.path ?? null,
     // Preview and NPC-decision cache hit rates for this session (ALE-22).
     cache: gm.cache(),
+    // p50/p95 after GO and cost per turn so far (ALE-24). The same numbers `pnpm meters` prints
+    // from the recording afterwards, available while the session is still running.
+    meters: gm.meters(),
     // Where `POST /save` writes (ALE-23). Null when saving is off.
     save: slot?.path ?? null,
   }));

@@ -20,6 +20,7 @@
     "dev:client": "pnpm --filter @deliberate/client dev",
     "e2e": "pnpm --filter @deliberate/engine build && playwright test -c e2e/playwright.config.ts",
     "replay": "pnpm --filter @deliberate/engine replay",
+    "meters": "pnpm --filter @deliberate/engine meters",
     "bank": "pnpm --filter @deliberate/engine bank",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build"
   },

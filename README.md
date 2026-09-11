@@ -28,6 +28,7 @@ pnpm dev:server     # Fastify on http://127.0.0.1:8787 (GET /healthz, WS /ws)
 pnpm dev:client     # Vite on http://127.0.0.1:5173, proxies /ws to the server
 pnpm e2e            # Playwright acceptance run: browser + server + engine + replay
 pnpm replay <file>  # Re-run a recorded session and check every state hash
+pnpm meters <file>  # Session cost and latency: p50/p95 after GO, dollars per turn
 ```
 
 Playing locally: `pnpm dev:server` in one terminal, `pnpm dev:client` in another, then open

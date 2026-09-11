@@ -21,4 +21,12 @@ export {
   type TurnMeta,
 } from './recorder.js';
 export { replay, type DivergenceKind, type ReplayDivergence, type ReplayReport } from './replay.js';
+export {
+  formatSummary,
+  isMeter,
+  percentile,
+  summarize,
+  type MeterSummary,
+  type Percentiles,
+} from './summary.js';
 export { memorySink, type LineSink, type MemorySink } from './sink.js';

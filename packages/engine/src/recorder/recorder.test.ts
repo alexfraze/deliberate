@@ -7,6 +7,7 @@ import {
   type Intent,
   type RecordedTurn,
   type RecordingHeader,
+  type RecordingLine,
 } from '@deliberate/protocol';
 import fc from 'fast-check';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -18,6 +19,7 @@ import { bankExpectation, type BankManifest } from './bank.js';
 import { main, type CliOut } from './cli.js';
 import { fileSink, readLines } from './fs-sink.js';
 import { parseRecording, RecordingError } from './jsonl.js';
+import { formatSummary, summarize } from './summary.js';
 import { createRecorder, RecorderClosedError } from './recorder.js';
 import { replay } from './replay.js';
 import { memorySink } from './sink.js';
@@ -265,6 +267,65 @@ afterAll(() => {
   rmSync(bankDir, { recursive: true, force: true });
 });
 
+/** A plausible meter line: the ALE-17 measurement, so the numbers in the test are real ones. */
+const METER = {
+  turn: 1,
+  latencyMs: { preview: 36_500, validate: 21, resolve: 10_800, narrate: 3_000, afterGo: 13_821 },
+  tokens: { input: 90, output: 400, cacheRead: 5454, cacheWrite: 0 },
+  usd: 0.2131,
+  calls: 2,
+  cacheHits: 1,
+} as const;
+
+describe('meter lines (ALE-24)', () => {
+  it('records what a turn cost without becoming part of the turn', () => {
+    const sink = memorySink();
+    const engine = createEngine(fixtureSnapshot(), { seed: FIXTURE_SEED });
+    const recorder = createRecorder(engine, { seed: FIXTURE_SEED, startedAt: STARTED_AT, sink });
+    SCRIPT.forEach((intent, i) => {
+      recorder.apply(intent);
+      recorder.meter({ ...METER, turn: i + 1 });
+    });
+    recorder.close();
+
+    const lines = parseRecording(sink.text());
+    expect(lines.filter((l) => l.line === 'meter')).toHaveLength(SCRIPT.length);
+    // A meter is not a turn: it does not advance the recorder's count, and it does not touch a
+    // hash. Interleaving them must leave the determinism check exactly where it was.
+    expect(recorder.turns).toBe(SCRIPT.length);
+
+    const report = replay(lines, createEngine);
+    expect(report.divergence?.reason ?? 'ok').toBe('ok');
+    expect(report.ok).toBe(true);
+    expect(report.turns).toBe(SCRIPT.length);
+    expect(report.finalHash).toBe(engine.hash());
+  });
+
+  it('summarises a session: p50/p95 after GO and cost per turn', () => {
+    const lines: RecordingLine[] = [12_000, 3_000, 9_000, 4_000].map((afterGo, i) => ({
+      line: 'meter',
+      ...METER,
+      turn: i + 1,
+      latencyMs: { ...METER.latencyMs, afterGo },
+    }));
+    const summary = summarize(lines);
+    expect(summary.turns).toBe(4);
+    // Nearest rank over the sorted sample, no interpolation: p50 is the second of four.
+    expect(summary.afterGoMs).toEqual({ p50: 4_000, p95: 12_000, mean: 7_000, max: 12_000 });
+    expect(summary.usd.total).toBeCloseTo(4 * METER.usd, 10);
+    expect(summary.usd.perTurn).toBeCloseTo(METER.usd, 10);
+    expect(summary.tokens.cacheRead).toBe(4 * METER.tokens.cacheRead);
+    expect(summary.cacheHits).toBe(4);
+    expect(formatSummary(summary)).toContain('after GO   p50 4.0 s  p95 12.0 s');
+    expect(formatSummary({ ...summary, turns: 0 })).toBe('no meter lines in this recording');
+  });
+
+  it('refuses a meter line with no turn number, and an unknown line kind', () => {
+    expect(() => parseRecording('{"line":"meter"}')).toThrow(RecordingError);
+    expect(() => parseRecording('{"line":"gibberish"}')).toThrow(RecordingError);
+  });
+});
+
 describe('fileSink and the replay CLI', () => {
   it('writes a recording a fresh engine replays to identical hashes', () => {
     const path = join(dir, 'session.jsonl');
@@ -325,6 +386,22 @@ describe('fileSink and the replay CLI', () => {
     expect(main(['bank', join(bankDir, 'nowhere')], captured(), captured())).toBe(2);
   });
 
+  it('prints the session summary from the recording, with no server and no key', () => {
+    const path = join(dir, 'metered.jsonl');
+    const engine = createEngine(fixtureSnapshot(), { seed: FIXTURE_SEED });
+    const sink = fileSink(path);
+    const recorder = createRecorder(engine, { seed: FIXTURE_SEED, startedAt: STARTED_AT, sink });
+    recorder.apply(SCRIPT[0]!);
+    recorder.meter({ ...METER });
+    recorder.close();
+
+    const out = captured();
+    expect(main(['meters', path], out, out)).toBe(0);
+    expect(out.text).toContain('turns 1');
+    expect(out.text).toContain('after GO   p50 13.8 s');
+    expect(out.text).toContain('$0.2131/turn');
+  });
+
   it('exits non-zero on divergence and on bad usage', () => {
     const path = join(dir, 'broken.jsonl');
     const { sink } = recordScript();
@@ -341,6 +418,7 @@ describe('fileSink and the replay CLI', () => {
 
     const usage = captured();
     expect(main(['replay'], usage, usage)).toBe(2);
+    expect(main(['meters'], usage, usage)).toBe(2);
     expect(main(['nonsense', path], usage, usage)).toBe(2);
     expect(main(['replay', join(dir, 'missing.jsonl')], usage, usage)).toBe(2);
     expect(usage.text).toContain('usage:');

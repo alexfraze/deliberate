@@ -1,5 +1,6 @@
 import {
   PROTOCOL_VERSION,
+  type RecordedMeter,
   type RecordedTurn,
   type RecordingHeader,
   type RecordingLine,
@@ -59,6 +60,14 @@ export function parseLine(text: string, at: number): RecordingLine {
       throw new RecordingError(`line ${at}: turn needs a diffs array`);
     }
     return value as RecordedTurn;
+  }
+  if (line['line'] === 'meter') {
+    // Meters are evidence about a turn, not part of it: a malformed one must not cost anybody
+    // their recording, so only the field `replay` and the summary index on is required.
+    if (typeof line['turn'] !== 'number') {
+      throw new RecordingError(`line ${at}: meter needs a turn number`);
+    }
+    return value as RecordedMeter;
   }
   throw new RecordingError(`line ${at}: unknown line kind ${String(line['line'])}`);
 }

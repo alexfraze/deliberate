@@ -602,7 +602,39 @@ export interface RecordedTurn {
   latencyMs: { preview: number; validate: number; resolve: number; narrate: number };
 }
 
-export type RecordingLine = RecordingHeader | RecordedTurn;
+/**
+ * What one player turn cost and how long it took (ALE-24).
+ *
+ * One `meter` line per GO, written after the turn has finished resolving and narrating — which is
+ * why it cannot simply ride on `RecordedTurn`: a turn's commit line is written the instant the
+ * engine accepts the intent, long before the game master has finished narrating what it meant. A
+ * meter line changes no state, so `replay` skips it and a recording's determinism is untouched.
+ *
+ * `input` counts tokens the model actually read fresh. `cacheRead` is counted apart because it is
+ * priced at a tenth of `input`, and one M1 call carried 5454 cached tokens against 90 uncached
+ * ones: summing them would have overstated that call's cost roughly twelvefold.
+ */
+export interface RecordedMeter {
+  line: 'meter';
+  /** The player turn these meters belong to, as `RecordedTurn.turn` numbers it. */
+  turn: number;
+  /** Wall time in ms. `afterGo` is validate + resolve + narrate: the number M3's gate is on. */
+  latencyMs: {
+    preview: number;
+    validate: number;
+    resolve: number;
+    narrate: number;
+    afterGo: number;
+  };
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  /** US dollars at the model's list price, computed where the prices are known (the server). */
+  usd: number;
+  /** Model calls this turn, and phases answered from the (state hash, intent) cache instead. */
+  calls: number;
+  cacheHits: number;
+}
+
+export type RecordingLine = RecordingHeader | RecordedTurn | RecordedMeter;
 
 // ---------------------------------------------------------------------------------------------
 // Save files (ALE-23) — one JSON document that a restarted server can resume from

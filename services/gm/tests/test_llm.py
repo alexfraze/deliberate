@@ -19,7 +19,7 @@ import httpx2
 import pytest
 from anthropic.resources.messages import Messages
 
-from deliberate_gm.config import DEFAULT_MODEL, Settings
+from deliberate_gm.config import DEFAULT_EFFORT, DEFAULT_MODEL, Settings
 from deliberate_gm.llm import AnthropicLLM, LLMRequest, LLMUnavailable
 
 REQUEST = LLMRequest(
@@ -96,7 +96,7 @@ def test_the_request_carries_what_this_model_needs() -> None:
     assert kwargs["model"] == "claude-opus-5"
     # Adaptive thinking, and depth inside output_config -- not a top-level `effort`.
     assert kwargs["thinking"] == {"type": "adaptive"}
-    assert kwargs["output_config"] == {"effort": "high"}
+    assert kwargs["output_config"] == {"effort": DEFAULT_EFFORT}
     assert "effort" not in kwargs
     assert kwargs["tools"] == REQUEST.tools
     assert kwargs["system"] == REQUEST.system

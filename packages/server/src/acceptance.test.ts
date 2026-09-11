@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 
-import { createEngine, parseRecording, replay } from '@deliberate/engine';
+import { createEngine, formatSummary, parseRecording, replay, summarize } from '@deliberate/engine';
 import { GATEHOUSE_SEED, GUARD_ID, MERCHANT_ID, gatehouseSnapshot } from '@deliberate/npcs';
 import {
   PROTOCOL_VERSION,
@@ -22,6 +22,7 @@ import {
 
 import { buildApp } from './app.js';
 import { GM_BRAIN_POLICY } from './gm/loop.js';
+import { tokensFrom, usdFor } from './gm/meters.js';
 import { httpGmService, type GmService, type GmTurnResponse } from './gm/service.js';
 
 /**
@@ -355,9 +356,6 @@ const PREVIEW_MS = Number(process.env['DELIBERATE_PREVIEW_MS'] ?? 120_000);
 const RESOLVE_MS = Number(process.env['DELIBERATE_RESOLVE_MS'] ?? 120_000);
 const NARRATE_MS = Number(process.env['DELIBERATE_NARRATE_MS'] ?? 90_000);
 
-/** claude-opus-5, $/1M tokens. Cache reads are a tenth of input, cache writes 1.25x. */
-const PRICE = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 } as const;
-
 describe.skipIf(!live)('M1 acceptance: ten-turn playthrough against the live model', () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
   let gmProcess: ChildProcess | null = null;
@@ -517,12 +515,9 @@ function report(
     },
     {} as Record<string, number>,
   );
-  const dollars =
-    ((totals['input_tokens'] ?? 0) * PRICE.input +
-      (totals['output_tokens'] ?? 0) * PRICE.output +
-      (totals['cache_read_input_tokens'] ?? 0) * PRICE.cacheRead +
-      (totals['cache_creation_input_tokens'] ?? 0) * PRICE.cacheWrite) /
-    1_000_000;
+  // The same prices and the same split the meters bill with (ALE-24), so the acceptance report
+  // and the recording's own summary can never disagree about what a turn cost.
+  const dollars = usdFor(tokensFrom(totals));
   const turns = timings.length || 1;
   const mean = (pick: (t: (typeof timings)[number]) => number): number =>
     Math.round(timings.reduce((a, t) => a + pick(t), 0) / turns);
@@ -534,6 +529,9 @@ function report(
   );
   console.log(`model calls ${usage.length} | tokens ${JSON.stringify(totals)}`);
   console.log(`$${dollars.toFixed(4)} total, $${(dollars / turns).toFixed(4)} per turn`);
+  // And the same thing again, read back out of the recording the server wrote — which is what
+  // `pnpm meters <file>` prints, and what M3's "p50 after GO < 10 s" is graded on (ALE-24).
+  console.log(`\n--- meters, from the recording ---\n${formatSummary(summarize(lines))}`);
   const gm = lines.filter((l): l is RecordedTurn => l.line === 'turn' && l.toolCalls.length > 0);
   // Refusals the model earned on its own, as opposed to the one the test drove deliberately.
   const earned = gm.filter(

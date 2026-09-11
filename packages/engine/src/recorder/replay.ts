@@ -73,6 +73,10 @@ export function replay(
       continue;
     }
 
+    // Meters record what a turn cost, not what it did. Nothing in them reaches the engine, so
+    // replay steps over them and a recording with or without them replays to the same hash.
+    if (line.line === 'meter') continue;
+
     if (!engine) throw new RecordingError(`line ${at}: a turn before the header`);
     const divergence = replayTurn(engine, line);
     recordedHash = line.hashAfter;
