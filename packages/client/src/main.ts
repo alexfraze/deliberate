@@ -242,11 +242,13 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
       // Deliberate: ask for a preview. Clicking somewhere else replaces it — the server keeps only
       // the last preview, so changing your mind costs nothing and commits nothing.
       panel.stage(result.intent);
+      const text = panel.text();
       transport.send({
         type: 'preview_request',
         room: DEFAULT_ROOM,
         turn,
         intent: result.intent,
+        ...(text ? { text } : {}),
       });
     } else {
       transport.send({ type: 'intent', room: DEFAULT_ROOM, turn, intent: result.intent });
@@ -269,10 +271,28 @@ panel.onGo(() => {
   hud.setError(null);
   panel.committing();
   transport.send({ type: 'go', room: DEFAULT_ROOM, turn });
+  panel.clearText();
 });
 panel.onToggle(() => {
   panel.reset();
   hud.setError(null);
+});
+panel.onSpeak(() => {
+  const text = panel.text();
+  if (!text) {
+    hud.setHint('Type something first — then Say / Ask.');
+    return;
+  }
+  if (!panel.isOn()) {
+    // Free text only means anything if the game master is being consulted; without deliberate
+    // mode a click goes straight to the engine, which has no idea what words are.
+    hud.setError('Turn on deliberate mode to talk to the game master.');
+    return;
+  }
+  // `intent: null` is the protocol's "ask only what the world does" — talk, do not act.
+  hud.setError(null);
+  panel.stage(null);
+  transport.send({ type: 'preview_request', room: DEFAULT_ROOM, turn, intent: null, text });
 });
 panel.onEndTurn(() => {
   if (selected === null) {
@@ -285,7 +305,14 @@ panel.onEndTurn(() => {
   hud.setError(null);
   if (panel.isOn()) {
     panel.stage(intent);
-    transport.send({ type: 'preview_request', room: DEFAULT_ROOM, turn, intent });
+    const text = panel.text();
+    transport.send({
+      type: 'preview_request',
+      room: DEFAULT_ROOM,
+      turn,
+      intent,
+      ...(text ? { text } : {}),
+    });
   } else {
     transport.send({ type: 'intent', room: DEFAULT_ROOM, turn, intent });
     panel.busy('resolving the turn', 15000);

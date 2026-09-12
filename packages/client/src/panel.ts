@@ -41,6 +41,15 @@ export interface DeliberatePanel {
    * hands initiative to the NPCs, and the engine — not the client — decides whether it is legal.
    */
   onEndTurn(handler: () => void): void;
+  /** What the player typed, trimmed. Empty string when they typed nothing. */
+  text(): string;
+  /** Clear the text box — after a turn commits, so speech is not accidentally repeated. */
+  clearText(): void;
+  /**
+   * The player asked the game master something without staging a mechanical action. The protocol
+   * allows `intent: null` precisely for this: talk to an NPC, ask what the world does.
+   */
+  onSpeak(handler: () => void): void;
 }
 
 export interface PanelOptions {
@@ -57,6 +66,19 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   const label = document.createElement('label');
   label.className = 'dl-toggle';
   label.append(toggle, document.createTextNode(' deliberate mode'));
+
+  // Free player text. It reaches the GM as quoted DATA, never as instruction (ALE-33), and the
+  // server caps its length. This is what turns "click a tile" into "tell the game master what you
+  // want"; every layer below it already accepted `text` before this box existed.
+  const speech = document.createElement('textarea');
+  speech.id = 'speech';
+  speech.rows = 2;
+  speech.placeholder = 'Say or ask something… (Enter to send, Shift+Enter for a new line)';
+
+  const say = document.createElement('button');
+  say.id = 'say';
+  say.type = 'button';
+  say.textContent = 'Say / Ask';
 
   const staged = element('div', 'dl-staged');
   const busy = element('div', 'dl-busy');
@@ -78,7 +100,7 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   endTurn.type = 'button';
   endTurn.textContent = 'End turn';
 
-  root.append(label, staged, busy, prose, reactions, go, endTurn, narration);
+  root.append(label, speech, say, staged, busy, prose, reactions, go, endTurn, narration);
 
   // The waiting indicator. One interval drives both the spinner and the clock; it is cleared on
   // every exit path so a finished turn can never leave a phantom "still working" on screen.
@@ -120,6 +142,15 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   go.addEventListener('click', () => goHandler?.());
   let endTurnHandler: (() => void) | null = null;
   endTurn.addEventListener('click', () => endTurnHandler?.());
+  let speakHandler: (() => void) | null = null;
+  say.addEventListener('click', () => speakHandler?.());
+  speech.addEventListener('keydown', (event) => {
+    // Enter sends, Shift+Enter newlines — the convention every chat box uses.
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      speakHandler?.();
+    }
+  });
 
   const setReactions = (lines: string[]): void => {
     reactions.replaceChildren(
@@ -199,6 +230,15 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     },
     onEndTurn(handler) {
       endTurnHandler = handler;
+    },
+    text() {
+      return speech.value.trim();
+    },
+    clearText() {
+      speech.value = '';
+    },
+    onSpeak(handler) {
+      speakHandler = handler;
     },
   };
 }
