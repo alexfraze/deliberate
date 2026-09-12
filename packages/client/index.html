@@ -65,6 +65,39 @@
       #deliberate:not(.dl-open) #go {
         display: none;
       }
+      /* Free player text. Hidden with the rest of the panel when deliberate mode is off, because
+         words only mean something when the game master is being consulted. */
+      #deliberate:not(.dl-open) #speech,
+      #deliberate:not(.dl-open) #say {
+        display: none;
+      }
+      #deliberate #speech {
+        margin-top: 10px;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 6px 8px;
+        font: inherit;
+        color: #e6e6e6;
+        background: #0b0d10;
+        border: 1px solid #33414f;
+        border-radius: 6px;
+        resize: vertical;
+      }
+      #deliberate #speech:focus {
+        outline: none;
+        border-color: #9fd0ff;
+      }
+      #deliberate #say {
+        margin-top: 6px;
+        width: 100%;
+        padding: 5px 0;
+        font: inherit;
+        color: #0b0d10;
+        background: #c8cdd3;
+        border: 0;
+        border-radius: 6px;
+        cursor: pointer;
+      }
       #deliberate .dl-staged {
         margin-top: 8px;
         color: #9fd0ff;
