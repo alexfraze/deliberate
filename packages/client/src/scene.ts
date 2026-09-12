@@ -67,6 +67,19 @@ export interface GameScene {
   setTileMarker(tile: Tile | null): void;
   /** 1 fits the whole map; larger moves the camera in. Clamped to sensible bounds. */
   setZoom(zoom: number): void;
+  /**
+   * Slide the camera across the ground plane, in screen-space pixels. Screen-space rather than
+   * world-space because a drag should move the map under the cursor by the distance dragged,
+   * whatever the isometric angle happens to be.
+   */
+  panByPixels(dx: number, dy: number): void;
+  /** Back to the framed default. */
+  recentre(): void;
+  /**
+   * Dead space on the right that a fixed overlay covers, in CSS pixels. The map is centred on the
+   * origin, so without this it centres under the panel and reads as off-centre.
+   */
+  setViewportInset(rightPx: number): void;
   setSelected(id: EntityId | null): void;
   /** What is under a pointer given in normalised device coordinates. */
   pick(ndc: Vector2): Pick;
@@ -126,6 +139,10 @@ export function createGameScene(): GameScene {
   let map: MapRecord | null = null;
   let selected: EntityId | null = null;
   let zoom = 1;
+  // Camera offset across the ground plane, and the width of the overlay covering the right edge.
+  let panX = 0;
+  let panZ = 0;
+  let viewportInset = 0;
 
   const disposeGroup = (group: Group): void => {
     for (const child of [...group.children]) {
@@ -292,10 +309,46 @@ export function createGameScene(): GameScene {
     camera.bottom = -frame.halfHeight;
     camera.near = frame.near;
     camera.far = frame.far;
-    camera.position.set(frame.position.x, frame.position.y, frame.position.z);
-    camera.lookAt(frame.target.x, frame.target.y, frame.target.z);
+
+    // Shift the frustum left by half the covered width so the map centres in the space the
+    // player can actually see, rather than behind the panel.
+    const worldPerPixel = (frame.halfWidth * 2) / Math.max(1, viewportWidth);
+    const inset = (viewportInset / 2) * worldPerPixel;
+    camera.left -= inset;
+    camera.right -= inset;
+
+    camera.position.set(frame.position.x + panX, frame.position.y, frame.position.z + panZ);
+    camera.lookAt(frame.target.x + panX, frame.target.y, frame.target.z + panZ);
     camera.updateProjectionMatrix();
   }
+
+  const panByPixels = (dx: number, dy: number): void => {
+    if (!map) return;
+    const frame = isoCameraFrame(map, viewportWidth / viewportHeight, zoom);
+    const worldPerPixel = (frame.halfWidth * 2) / Math.max(1, viewportWidth);
+    // Screen right/down mapped onto the ground plane for this fixed isometric yaw. Dragging
+    // moves the world with the cursor, so the deltas are negated.
+    const right = { x: Math.SQRT1_2, z: -Math.SQRT1_2 };
+    const down = { x: Math.SQRT1_2, z: Math.SQRT1_2 };
+    panX -= (dx * right.x + dy * down.x) * worldPerPixel;
+    panZ -= (dx * right.z + dy * down.z) * worldPerPixel;
+    const limit = Math.max(map.width, map.height) * TILE_SIZE;
+    panX = Math.min(limit, Math.max(-limit, panX));
+    panZ = Math.min(limit, Math.max(-limit, panZ));
+    frameCamera();
+  };
+
+  const recentre = (): void => {
+    panX = 0;
+    panZ = 0;
+    zoom = 1;
+    frameCamera();
+  };
+
+  const setViewportInset = (rightPx: number): void => {
+    viewportInset = Math.max(0, rightPx);
+    frameCamera();
+  };
 
   const setZoom = (next: number): void => {
     zoom = Math.min(4, Math.max(0.6, next));
@@ -318,6 +371,9 @@ export function createGameScene(): GameScene {
     setHover,
     setTileMarker,
     setZoom,
+    panByPixels,
+    recentre,
+    setViewportInset,
     setSelected,
     pick,
     projectEntity,

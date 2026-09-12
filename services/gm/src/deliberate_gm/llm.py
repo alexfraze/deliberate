@@ -31,6 +31,10 @@ class LLMRequest:
     messages: list[dict[str, Any]]
     tools: list[dict[str, Any]]
     stream: bool = False
+    #: Which turn phase this call serves. `narrate` is routed to the cheaper narration tier;
+    #: everything else uses the game master's own model, because those calls make tool calls
+    #: the engine will validate and must reason about the rules.
+    phase: str = "preview"
 
 
 @dataclass
@@ -106,13 +110,14 @@ class AnthropicLLM:
         import anthropic
 
         settings = self._settings
+        narrating = request.phase == "narrate"
         kwargs: dict[str, Any] = {
-            "model": settings.model,
+            "model": settings.narrate_model if narrating else settings.model,
             "system": request.system,
             "messages": request.messages,
             "tools": request.tools,
             "thinking": {"type": "adaptive"},
-            "output_config": {"effort": settings.effort},
+            "output_config": {"effort": settings.narrate_effort if narrating else settings.effort},
         }
         try:
             if request.stream:

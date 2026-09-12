@@ -10,6 +10,8 @@ from pathlib import Path
 #: Model defaults are fixed by docs/m1-swarm.md decision 7. `budget_tokens` does not appear
 #: anywhere in this service: it is removed on this model and returns a 400.
 DEFAULT_MODEL = "claude-opus-5"
+#: The narration tier. Prose only — it never calls a tool and never touches state.
+DEFAULT_NARRATE_MODEL = "claude-sonnet-5"
 
 #: Effort was `high` through M1 and is `medium` from ALE-24, on measurement rather than taste.
 #: Three ten-turn playthroughs of the ALE-16 gatehouse against the live model, identical beats,
@@ -46,6 +48,7 @@ DEFAULT_MODEL = "claude-opus-5"
 #:
 #: `pnpm meters recordings/bank/<name>.jsonl` re-prints both rows with no key and no network.
 DEFAULT_EFFORT = "medium"
+DEFAULT_NARRATE_EFFORT = "low"
 
 
 def _repo_root() -> Path:
@@ -73,6 +76,13 @@ class Settings:
 
     model: str = DEFAULT_MODEL
     effort: str = DEFAULT_EFFORT
+    #: Narration is prose about what the engine ALREADY decided: no tools, no rules reasoning,
+    #: nothing that can affect state or replay. Measured on the M3 recordings it was 71% of
+    #: after-GO time in combat and 99.8% in dialogue, so it is the cheapest phase to move down
+    #: a tier. Sonnet 5 is $2/$10 per MTok against Opus 5's $5/$25.
+    narrate_model: str = DEFAULT_NARRATE_MODEL
+    #: Narration does not need to deliberate; it needs to write.
+    narrate_effort: str = DEFAULT_NARRATE_EFFORT
     #: Non-streaming ceiling. Narration streams and uses `stream_max_tokens` instead.
     max_tokens: int = 16_000
     stream_max_tokens: int = 64_000
@@ -97,6 +107,8 @@ class Settings:
         return cls(
             model=os.environ.get("GM_MODEL", DEFAULT_MODEL),
             effort=os.environ.get("GM_EFFORT", DEFAULT_EFFORT),
+            narrate_model=os.environ.get("GM_NARRATE_MODEL", DEFAULT_NARRATE_MODEL),
+            narrate_effort=os.environ.get("GM_NARRATE_EFFORT", DEFAULT_NARRATE_EFFORT),
             max_tokens=_env_int("GM_MAX_TOKENS", 16_000),
             stream_max_tokens=_env_int("GM_STREAM_MAX_TOKENS", 64_000),
             engine_url=os.environ.get("GM_ENGINE_URL", "http://127.0.0.1:8787"),

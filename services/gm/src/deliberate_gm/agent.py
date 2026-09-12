@@ -110,7 +110,13 @@ class GmAgent:
                 fixed=(system, self._tools),
             )
             result = self._llm.create(
-                LLMRequest(system=system, messages=messages, tools=self._tools, stream=True)
+                LLMRequest(
+                    system=system,
+                    messages=messages,
+                    tools=self._tools,
+                    stream=True,
+                    phase=request.phase,
+                )
             )
             _accumulate(usage, result.usage)
 

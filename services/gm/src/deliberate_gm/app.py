@@ -83,6 +83,10 @@ def create_app(
             "ok": True,
             "model": settings.model,
             "effort": settings.effort,
+            # The narration tier is a different model, so it has to be visible here or a
+            # misrouted phase is invisible from outside the process.
+            "narrate_model": settings.narrate_model,
+            "narrate_effort": settings.narrate_effort,
             "contract": status,
             "tools": list(tools),
             "tool_kinds": kinds,

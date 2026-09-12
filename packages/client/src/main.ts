@@ -70,6 +70,10 @@ function resize(): void {
   const { width, height } = viewport();
   renderer.setSize(width, height, false);
   scene.resize(width, height);
+  // The panel is a fixed overlay on the right. Tell the scene how much of the viewport it hides
+  // so the map centres in what the player can see rather than behind it.
+  const panelWidth = panelElement.getBoundingClientRect().width;
+  scene.setViewportInset(panelWidth > 0 && panelWidth < width / 2 ? panelWidth + 24 : 0);
 }
 window.addEventListener('resize', resize);
 resize();
@@ -226,8 +230,61 @@ function describeTile(map: MapRecord | null, tile: Tile): string {
   return `tile (${tile.x}, ${tile.y}) · ${cell.walkable ? 'walkable' : 'blocked'} · elevation ${cell.elevation}`;
 }
 
+// --- camera pan -------------------------------------------------------------------------------
+
+let dragging = false;
+let dragMoved = false;
+let lastDrag = { x: 0, y: 0 };
+const DRAG_SLOP = 4; // px; below this a drag is still a click
+
 renderer.domElement.addEventListener('pointerdown', (event) => {
+  // Left drag pans, and so does middle/right, but only left can also be a click.
+  dragging = true;
+  dragMoved = false;
+  lastDrag = { x: event.clientX, y: event.clientY };
+  renderer.domElement.setPointerCapture(event.pointerId);
+});
+
+renderer.domElement.addEventListener('pointermove', (event) => {
+  if (!dragging) return;
+  const dx = event.clientX - lastDrag.x;
+  const dy = event.clientY - lastDrag.y;
+  if (!dragMoved && Math.hypot(dx, dy) < DRAG_SLOP) return;
+  dragMoved = true;
+  lastDrag = { x: event.clientX, y: event.clientY };
+  scene.panByPixels(dx, dy);
+});
+
+const endDrag = (event: PointerEvent): void => {
+  dragging = false;
+  if (renderer.domElement.hasPointerCapture(event.pointerId)) {
+    renderer.domElement.releasePointerCapture(event.pointerId);
+  }
+};
+renderer.domElement.addEventListener('pointerup', endDrag);
+renderer.domElement.addEventListener('pointercancel', endDrag);
+
+window.addEventListener('keydown', (event) => {
+  // Not while typing into the speech box.
+  if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement)
+    return;
+  const step = event.shiftKey ? 160 : 60;
+  if (event.key === 'ArrowLeft') scene.panByPixels(step, 0);
+  else if (event.key === 'ArrowRight') scene.panByPixels(-step, 0);
+  else if (event.key === 'ArrowUp') scene.panByPixels(0, step);
+  else if (event.key === 'ArrowDown') scene.panByPixels(0, -step);
+  else if (event.key === 'c' || event.key === 'C') {
+    scene.recentre();
+    zoom = 1;
+    hud.setHint('Camera recentred.');
+  } else return;
+  event.preventDefault();
+});
+
+renderer.domElement.addEventListener('pointerup', (event) => {
   if (event.button !== 0) return;
+  // A drag is a camera move, not a selection.
+  if (dragMoved) return;
   const pick = scene.pick(toNdc(event));
   const result = resolvePick(selected, pick);
   setSelected(result.selected);
