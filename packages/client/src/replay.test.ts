@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
 import type { Diff } from '@deliberate/protocol';
 import { describe, expect, it } from 'vitest';
 
@@ -8,6 +5,9 @@ import { AnimationQueue, animationFor, type Animation, type QueueEvent } from '.
 import { initiativeView } from './initiative.js';
 import { parseRecording, replayName, type RecordedSession } from './replay.js';
 import { applyDiffsToView, applyDiffToView, viewFromSnapshot, type ViewState } from './view.js';
+
+import m1Acceptance from '../../../recordings/bank/m1-acceptance.jsonl?raw';
+import yardBrawl from '../../../recordings/bank/yard-brawl.jsonl?raw';
 
 /**
  * The ALE-19 done-when, as a test: **a recorded M1 session plays back with no animation overlap
@@ -23,9 +23,14 @@ import { applyDiffsToView, applyDiffToView, viewFromSnapshot, type ViewState } f
  *      one;
  *   5. the queue draining, so a session cannot leave an animation stuck on screen.
  */
+// Pulled in through vite's `?raw` rather than `node:fs`: this is a browser package, and a test in
+// it that reaches for the filesystem is one import away from src doing the same.
+const BANK: Record<string, string> = { 'yard-brawl': yardBrawl, 'm1-acceptance': m1Acceptance };
+
 function bank(name: string): RecordedSession {
-  const path = fileURLToPath(new URL(`../../../recordings/bank/${name}.jsonl`, import.meta.url));
-  const session = parseRecording(readFileSync(path, 'utf8'));
+  const text = BANK[name];
+  if (text === undefined) throw new Error(`${name}: not in the bank`);
+  const session = parseRecording(text);
   if (!session) throw new Error(`${name}: no header in the recording`);
   return session;
 }

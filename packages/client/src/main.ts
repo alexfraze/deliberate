@@ -69,6 +69,8 @@ const panel = createDeliberatePanel(panelElement, {
 });
 
 const fixtureMode = useFixtureMode(location.search, location.hash);
+/** `?replay=<name>` watches a recorded bank session play back (ALE-19). Nothing is interactive. */
+const replay = replayName(location.search, location.hash);
 // Whether a game master is behind this session at all (ALE-39). Fixture mode has no server to ask.
 void (fixtureMode ? Promise.resolve(NO_GM) : fetchGmHealth()).then((gm) => panel.setGm(gm));
 
@@ -160,8 +162,9 @@ function onMessage(message: ServerMessage): void {
       hud.setError(null);
       // The diffs ARE the outcome. Resolve may still be running NPC turns behind them, and each
       // NPC turn sends its own diffs which refresh this deadline — but if nothing more arrives,
-      // the turn is simply over and the indicator must not keep claiming otherwise.
-      panel.busy('the world is acting', 6000);
+      // the turn is simply over and the indicator must not keep claiming otherwise. In a replay
+      // nothing is acting at all — it already happened — so there is nothing to wait for.
+      if (!replay) panel.busy('the world is acting', 6000);
       return;
     }
     case 'error': {
@@ -183,8 +186,6 @@ function onMessage(message: ServerMessage): void {
     }
   }
 }
-
-const replay = replayName(location.search, location.hash);
 
 const transport: Transport = replay
   ? // Watch a recorded session play back through the real render path (ALE-19). Turns are paced by

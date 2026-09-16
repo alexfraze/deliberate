@@ -167,7 +167,9 @@ export function createHud(hudElement: HTMLElement, overlay: HTMLElement): Hud {
       overlay.appendChild(element);
       return {
         update(x, y, t) {
-          element.style.transform = `translate(-50%, -50%) translate(${x}px, ${y - t * 42}px)`;
+          // Starts clear of the head rather than on it: at the moment of impact the capsule and
+          // its attacker are overlapping, and a number drawn between them is unreadable.
+          element.style.transform = `translate(-50%, -50%) translate(${x}px, ${y - 18 - t * 42}px)`;
           element.style.opacity = String(1 - Math.max(0, t - 0.6) / 0.4);
         },
         remove() {

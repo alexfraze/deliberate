@@ -37,6 +37,11 @@ Tick **deliberate mode** to play the M1 loop instead: a click previews the actio
 master telegraphs what the NPCs would do, and nothing happens until you press GO. Previewing again
 replaces the last preview, so changing your mind costs nothing.
 
+Watching a recorded session instead of playing one: `pnpm dev:client` and open
+http://127.0.0.1:5173/?replay=yard-brawl. Any recording in `recordings/bank/` can be named there,
+and it plays back through the real renderer — tweened moves, strikes, deaths and the turn-order
+strip — with no server and no model in the loop.
+
 The server records the session to `recordings/<timestamp>.jsonl`; `pnpm replay` that file to
 check it re-runs to identical hashes.
 
