@@ -30,6 +30,12 @@ export interface MeterSummary {
   /** Model calls, and phases the (state hash, intent) cache answered instead (ALE-22). */
   calls: number;
   cacheHits: number;
+  /**
+   * Of the above, what warming the cache for actions the player only hovered over cost (ALE-40).
+   * Reported apart from `usd` because it is the one line item a *cap* is supposed to bound: if
+   * `perTurn` here ever approaches a whole preview, the speculation budget is set too high.
+   */
+  speculation: { count: number; usd: number; perTurn: number };
 }
 
 const NO_PERCENTILES: Percentiles = { p50: 0, p95: 0, mean: 0, max: 0 };
@@ -79,6 +85,11 @@ export function summarize(lines: Iterable<RecordingLine>): MeterSummary {
     },
     calls: sum((m) => m.calls),
     cacheHits: sum((m) => m.cacheHits),
+    speculation: {
+      count: sum((m) => m.speculations ?? 0),
+      usd: sum((m) => m.speculativeUsd ?? 0),
+      perTurn: meters.length ? sum((m) => m.speculativeUsd ?? 0) / meters.length : 0,
+    },
   };
 }
 
@@ -94,5 +105,6 @@ export function formatSummary(summary: MeterSummary): string {
     `cost       $${summary.usd.perTurn.toFixed(4)}/turn  $${summary.usd.total.toFixed(4)} total`,
     `tokens     in ${tokens.input}  out ${tokens.output}  cache read ${tokens.cacheRead}  cache write ${tokens.cacheWrite}`,
     `model calls ${summary.calls}  cache hits ${summary.cacheHits}`,
+    `speculation ${summary.speculation.count} warmed  $${summary.speculation.perTurn.toFixed(4)}/turn  $${summary.speculation.usd.toFixed(4)} total`,
   ].join('\n');
 }

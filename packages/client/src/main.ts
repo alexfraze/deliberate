@@ -30,7 +30,8 @@ import { initiativeView } from './initiative.js';
 import { createDeliberatePanel } from './panel.js';
 import { createRenderer } from './renderer.js';
 import { createGameScene } from './scene.js';
-import { resolvePick } from './selection.js';
+import { resolvePick, type Pick } from './selection.js';
+import { createSpeculator } from './speculate.js';
 import { NO_GM } from './deliberate.js';
 import { replayName } from './replay.js';
 import {
@@ -77,6 +78,12 @@ void (fixtureMode ? Promise.resolve(NO_GM) : fetchGmHealth()).then((gm) => panel
 let selected: EntityId | null = null;
 let turn = 0;
 let hash = '';
+/**
+ * True between sending a `preview_request` or `go` and the server answering. Speculation must
+ * never race a preview the player actually asked for: the server serialises the two anyway, so a
+ * frame sent now would only queue the player behind a guess.
+ */
+let awaitingServer = false;
 
 const { renderer, backend } = await createRenderer();
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
@@ -151,6 +158,8 @@ function onMessage(message: ServerMessage): void {
       scene.syncEntities(view);
       resize();
       setSelected(selected !== null && view.entities[selected] ? selected : null);
+      speculator.turn(turn);
+      awaitingServer = false;
       refreshTurn();
       hud.setHint(`joined · ${Object.keys(view.entities).length} entities on ${view.mapId}`);
       return;
@@ -160,6 +169,10 @@ function onMessage(message: ServerMessage): void {
       hash = message.hash;
       queue.enqueue(message.diffs);
       hud.setError(null);
+      // A new turn is a new world, so every key the cache holds for this one is dead. The
+      // pointer's allowance starts again with it.
+      speculator.turn(turn);
+      awaitingServer = false;
       // The diffs ARE the outcome. Resolve may still be running NPC turns behind them, and each
       // NPC turn sends its own diffs which refresh this deadline — but if nothing more arrives,
       // the turn is simply over and the indicator must not keep claiming otherwise. In a replay
@@ -168,6 +181,7 @@ function onMessage(message: ServerMessage): void {
       return;
     }
     case 'error': {
+      awaitingServer = false;
       hud.setError(message.reason);
       panel.idle();
       panel.reset(message.reason);
@@ -176,6 +190,7 @@ function onMessage(message: ServerMessage): void {
     case 'preview': {
       // Nothing in here has happened: it is what the game master says would happen if you GO.
       turn = message.turn;
+      awaitingServer = false;
       panel.showPreview(message.text, message.diffs);
       hud.setHint(message.text);
       return;
@@ -201,6 +216,46 @@ const transport: Transport = replay
         onMessage,
         onStatus: (status) => hud.setStatus(status),
       });
+
+/**
+ * Speculative preview warming (ALE-40). The player deliberates for seconds and a preview takes
+ * tens of them, so the pointer resting on an action is taken as a cheap bet that they will pick
+ * it: the server warms the very same `(state, intent)` cache entry their `preview_request` will
+ * look up, and if the bet lands the preview comes back in ~0 s instead of ~30.
+ *
+ * It is a bet with real money on it — one model call each — so `speculate.ts` is stingy on dwell,
+ * on repeats and on a per-turn ceiling, `speculationCandidate` refuses to bet at all unless the
+ * conditions are exactly right, and the server enforces its own ceiling regardless of what this
+ * page sends. `?speculate=0` turns it off here; `GM_SPECULATE=off` turns it off for everyone.
+ */
+const speculator = createSpeculator({
+  enabled: new URLSearchParams(location.search).get('speculate') !== '0',
+  send: (intent) => transport.send({ type: 'speculate', room: DEFAULT_ROOM, turn, intent }),
+});
+
+/** A real frame is going out: disarm the guess, and stop guessing until the server answers. */
+function askingServer(): void {
+  speculator.cancel();
+  awaitingServer = true;
+}
+
+/**
+ * What, if anything, is worth warming for the thing under the cursor — and every reason not to.
+ *
+ * The intent is composed by `resolvePick`, the same pure function the click itself goes through,
+ * so what is warmed is *the preview the player would get*, keyed identically. Guessing differently
+ * from the click would spend the money and miss the cache, which is the worst of both.
+ */
+function speculationCandidate(pick: Pick): Intent | null {
+  // Off: a click commits immediately, so there is no preview to warm.
+  if (!panel.isOn()) return null;
+  // The player is already waiting on the server, or driving the camera rather than choosing.
+  if (awaitingServer || dragging) return null;
+  // Free text is part of the cache key (`previewKey`), and half-typed text is a key that will
+  // never be asked for. Warming it would pay for an answer to a question nobody asks.
+  if (panel.text()) return null;
+  return resolvePick(selected, pick).intent;
+}
 
 // --- animation -------------------------------------------------------------------------------
 
@@ -280,6 +335,9 @@ renderer.domElement.addEventListener('pointermove', (event) => {
   hovered = pick.kind === 'none' ? null : pick.tile;
   scene.setHover(hovered);
   renderer.domElement.style.cursor = pick.kind === 'entity' ? 'pointer' : 'default';
+  // Dwell, not movement: this only re-arms when the *target* changes, so the clock survives a
+  // trembling hand and never starts on a pointer sweeping past.
+  speculator.hover(speculationCandidate(pick));
 });
 
 function describeTile(map: MapRecord | null, tile: Tile): string {
@@ -297,6 +355,7 @@ const DRAG_SLOP = 4; // px; below this a drag is still a click
 
 renderer.domElement.addEventListener('pointerdown', (event) => {
   // Left drag pans, and so does middle/right, but only left can also be a click.
+  speculator.cancel();
   dragging = true;
   dragMoved = false;
   lastDrag = { x: event.clientX, y: event.clientY };
@@ -357,6 +416,7 @@ renderer.domElement.addEventListener('pointerup', (event) => {
       // Deliberate: ask for a preview. Clicking somewhere else replaces it — the server keeps only
       // the last preview, so changing your mind costs nothing and commits nothing.
       panel.stage(result.intent);
+      askingServer();
       const text = panel.text();
       transport.send({
         type: 'preview_request',
@@ -388,6 +448,7 @@ renderer.domElement.addEventListener(
 panel.onGo(() => {
   hud.setError(null);
   panel.committing();
+  askingServer();
   transport.send({ type: 'go', room: DEFAULT_ROOM, turn });
   panel.clearText();
 });
@@ -410,6 +471,7 @@ panel.onSpeak(() => {
   // `intent: null` is the protocol's "ask only what the world does" — talk, do not act.
   hud.setError(null);
   panel.stage(null);
+  askingServer();
   transport.send({ type: 'preview_request', room: DEFAULT_ROOM, turn, intent: null, text });
 });
 panel.onEndTurn(() => {
@@ -423,6 +485,7 @@ panel.onEndTurn(() => {
   hud.setError(null);
   if (panel.isOn()) {
     panel.stage(intent);
+    askingServer();
     const text = panel.text();
     transport.send({
       type: 'preview_request',

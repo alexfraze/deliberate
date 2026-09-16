@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createEngine, type Engine } from '@deliberate/engine';
 import {
@@ -22,7 +22,7 @@ import { createRoom, type RoomSocket } from '../room.js';
 import { createTurnCache, decisionKey, previewKey } from './cache.js';
 import { createEngineRegistry } from './engines.js';
 import { createGmLoop, type GmLoopOptions } from './loop.js';
-import type { GmTurnRequest } from './service.js';
+import type { GmTurnRequest, GmTurnResponse } from './service.js';
 import { stubGmService, type ScriptedTurn } from './stub.js';
 import { executeGmToolRequest } from './tool.js';
 
@@ -351,5 +351,228 @@ describe('the cache itself', () => {
     expect(previewKey(hash, a, null)).not.toBe(previewKey(hash, a, 'words'));
     expect(previewKey(hash, a, null)).not.toBe(previewKey('h2', a, null));
     expect(previewKey(hash, null, null)).not.toBe(previewKey(hash, a, null));
+  });
+});
+
+/**
+ * ALE-40: the client-side chooser, and the server-side ceiling that does not trust it.
+ *
+ * ALE-22 built `speculate()` and nothing called it, so the cache measured zero hits in every live
+ * run. These are the tests for the wire that now does — and, because every speculation is a real
+ * model call, most of them assert a call that must **not** happen.
+ */
+describe('speculative warming over the wire', () => {
+  const hover = async (
+    h: ReturnType<typeof harness>,
+    intent: Intent,
+    turn = h.room.turn(),
+  ): Promise<void> => {
+    h.room.handle(h.socket, { type: 'speculate', room: DEFAULT_ROOM, turn, intent });
+    await h.loop.idle();
+  };
+
+  it('warms the preview the hovering player then asks for, and answers it without a model call', async () => {
+    const h = harness(() => ({ narration: 'The gate creaks.' }));
+
+    await hover(h, step(1));
+    expect(h.asked, 'hovering did not warm anything').toHaveLength(1);
+    // A hint, not a request: nothing came back down the socket and nothing is staged.
+    expect(h.socket.received).toHaveLength(0);
+    expect(h.loop.pending()).toBeNull();
+
+    await h.preview(step(1));
+    expect(h.asked, 'the warmed answer was not reused').toHaveLength(1);
+    expect(h.loop.cache().preview).toMatchObject({ hits: 1 });
+    expect(previews(h.socket).at(-1)?.text).toBe('The gate creaks.');
+  });
+
+  it('never mutates the real engine, even when the game master acts during one', async () => {
+    const h = harness(() => ({
+      calls: [
+        { tool: 'say', input: { npc_id: GUARD_ID, text: 'Halt.', to: null } },
+        { tool: 'set_flag', input: { key: 'warned', value: true } },
+      ],
+      narration: 'Halloran raises a hand.',
+    }));
+
+    const before = h.engine.hash();
+    await hover(h, step(1));
+    expect(h.asked).toHaveLength(1);
+    expect(h.engine.hash(), 'speculation mutated the real world').toBe(before);
+    expect(h.room.turn()).toBe(0);
+  });
+
+  it('spends no more than the turn allowance however much the pointer wanders', async () => {
+    const h = harness(() => ({ narration: 'A pause.' }));
+    for (const dx of [1, -1, 2, -2, 3]) await hover(h, step(dx));
+
+    expect(h.asked, 'the pointer spent more than its allowance').toHaveLength(2);
+    expect(h.loop.speculation()).toMatchObject({ turn: 0, spent: 2, dropped: 3, budget: 2 });
+    // The stub reports no usage, so the dollar ceiling never bit here: this was the count cap.
+    expect(h.loop.speculation().usd).toBe(0);
+
+    // Committing moves the world on, so every cached key dies and the allowance starts again.
+    await h.preview(step(1));
+    await h.go();
+    await hover(h, step(2));
+    expect(h.loop.speculation()).toMatchObject({ turn: 1, spent: 1, dropped: 0 });
+  });
+
+  it('is off entirely when the budget is zero', async () => {
+    const h = harness(() => ({ narration: 'A pause.' }), { speculationsPerTurn: 0 });
+    await hover(h, step(1));
+    expect(h.asked).toHaveLength(0);
+    expect(h.loop.speculation()).toMatchObject({ spent: 0, dropped: 1, budget: 0 });
+    // And the player's own preview still works: the kill switch kills the guessing, not the game.
+    await h.preview(step(1));
+    expect(h.asked).toHaveLength(1);
+  });
+
+  it('drops a speculation composed against a turn that has already moved on', async () => {
+    const h = harness(() => ({ narration: 'A pause.' }));
+    await h.preview(step(1));
+    await h.go();
+    const before = h.asked.length;
+    await hover(h, step(2), 0);
+    expect(h.asked.length, 'a stale speculation reached the game master').toBe(before);
+    // Silently: the player did not ask for anything, so there is nothing to refuse them.
+    expect(h.socket.received.filter((m) => m.type === 'error')).toHaveLength(0);
+  });
+
+  it('charges nothing for hovering over ground the engine refuses', async () => {
+    const h = harness(() => ({ narration: 'unreachable' }));
+    await hover(h, { kind: 'move', entity: GATEHOUSE_PLAYER_ID, to: { x: -5, y: -5 } });
+    expect(h.asked).toHaveLength(0);
+    expect(h.loop.speculation()).toMatchObject({ spent: 0 });
+  });
+
+  it('bounds the speculative spend it reports on the turn it was spent in', async () => {
+    const h = harness(() => ({ narration: 'A pause.' }));
+    await hover(h, step(1));
+    await h.preview(step(-1));
+    await h.go();
+    const summary = h.loop.meters();
+    expect(summary.speculation.count).toBe(1);
+    expect(summary.speculation.perTurn).toBe(summary.speculation.usd);
+  });
+});
+
+describe('a speculation the player contradicts', () => {
+  /** A game master that answers only when the test lets it, or when its call is aborted. */
+  function slowHarness() {
+    const engine = createEngine(gatehouseSnapshot(), {
+      seed: GATEHOUSE_SEED,
+      templates: TEMPLATES,
+    });
+    const room = createRoom({ engine });
+    const registry = createEngineRegistry({ engine, seed: GATEHOUSE_SEED, templates: TEMPLATES });
+    const waiting: (() => void)[] = [];
+    const gm = {
+      turn: (_request: GmTurnRequest, options?: { signal?: AbortSignal }) =>
+        new Promise<never | GmTurnResponse>((resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          waiting.push(() =>
+            resolve({ narration: 'answered', trace: [], stop_reason: 'end_turn', memory: {} }),
+          );
+        }),
+    };
+    const loop = createGmLoop({ room, registry, gm });
+    room.setGmFrames((socket, message) => loop.handle(socket, message));
+    const socket = fakeSocket();
+    room.handle(socket, { type: 'join', room: DEFAULT_ROOM, protocol: 1 });
+    socket.received.length = 0;
+    return { room, loop, socket, waiting };
+  }
+
+  it('is cancelled rather than waited out, so the player is not queued behind a wrong guess', async () => {
+    const h = slowHarness();
+    h.room.handle(h.socket, { type: 'speculate', room: DEFAULT_ROOM, turn: 0, intent: step(1) });
+    // The guess is genuinely in the air: the game master has been asked and has not answered.
+    await vi.waitFor(() => expect(h.waiting).toHaveLength(1));
+
+    // The player asks for something else. The guess is now known to be wrong AND is the only
+    // thing between them and their answer, so it is aborted rather than waited out.
+    h.room.handle(h.socket, {
+      type: 'preview_request',
+      room: DEFAULT_ROOM,
+      turn: 0,
+      intent: step(-1),
+    });
+    await vi.waitFor(() => expect(h.waiting).toHaveLength(2));
+    h.waiting[1]?.();
+    await h.loop.idle();
+    expect(previews(h.socket).at(-1)?.text).toBe('answered');
+  });
+});
+
+/**
+ * The count cap is not the bound that matters in a fight. Since ALE-32 the game master takes the
+ * NPC turns *inside* the preview call, on the clone, so one speculation in an encounter pays for
+ * the player's action and every reaction to it — a number this loop cannot know before it makes
+ * the call. So there is a second ceiling, in dollars.
+ */
+describe('the speculation dollar ceiling', () => {
+  /** A game master whose every answer costs about fifty cents in output tokens. */
+  function expensiveHarness(usdPerTurn?: number) {
+    const engine = createEngine(gatehouseSnapshot(), {
+      seed: GATEHOUSE_SEED,
+      templates: TEMPLATES,
+    });
+    const room = createRoom({ engine });
+    const registry = createEngineRegistry({ engine, seed: GATEHOUSE_SEED, templates: TEMPLATES });
+    const asked: string[] = [];
+    const gm = {
+      turn: async (request: GmTurnRequest): Promise<GmTurnResponse> => {
+        asked.push(request.phase);
+        return {
+          narration: 'an expensive silence',
+          trace: [],
+          stop_reason: 'end_turn',
+          memory: {},
+          usage: { input_tokens: 0, output_tokens: 20_000 }, // $0.50 at list price
+        };
+      },
+    };
+    const loop = createGmLoop({
+      room,
+      registry,
+      gm,
+      ...(usdPerTurn === undefined ? {} : { speculationUsdPerTurn: usdPerTurn }),
+    });
+    room.setGmFrames((socket, message) => loop.handle(socket, message));
+    const socket = fakeSocket();
+    room.handle(socket, { type: 'join', room: DEFAULT_ROOM, protocol: 1 });
+    return { room, loop, socket, asked };
+  }
+
+  const hover = async (h: ReturnType<typeof expensiveHarness>, intent: Intent): Promise<void> => {
+    h.room.handle(h.socket, {
+      type: 'speculate',
+      room: DEFAULT_ROOM,
+      turn: h.room.turn(),
+      intent,
+    });
+    await h.loop.idle();
+  };
+
+  it('stops after one speculation the turn could not afford, though the count allows two', async () => {
+    const h = expensiveHarness();
+    await hover(h, step(1));
+    await hover(h, step(-1));
+
+    // The first always runs — nothing can price a call before making it. The second is refused on
+    // money rather than on count, which is the whole point of having both.
+    expect(h.asked).toHaveLength(1);
+    const stats = h.loop.speculation();
+    expect(stats).toMatchObject({ spent: 1, dropped: 1, budget: 2, usdBudget: 0.3 });
+    expect(stats.usd).toBeCloseTo(0.5, 5);
+  });
+
+  it('lets a generous ceiling through, so it is the money and not an accident', async () => {
+    const h = expensiveHarness(10);
+    await hover(h, step(1));
+    await hover(h, step(-1));
+    expect(h.asked).toHaveLength(2);
+    expect(h.loop.speculation()).toMatchObject({ spent: 2, dropped: 0 });
   });
 });

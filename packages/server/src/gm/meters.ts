@@ -100,6 +100,9 @@ export function createMeters(): Meters {
       const latencyMs = { preview: 0, validate: 0, resolve: 0, narrate: 0, afterGo: 0 };
       let calls = 0;
       let cacheHits = 0;
+      /** The share of the above that the player's pointer spent rather than their click (ALE-40). */
+      let speculations = 0;
+      let speculativeUsd = 0;
       let openedAt: number | null = null;
       let closedAt = 0;
 
@@ -120,6 +123,10 @@ export function createMeters(): Meters {
           }
           if (report.cached) cacheHits += 1;
           else if (phase !== 'validate') calls += 1;
+          if (phase === 'speculate' && !report.cached) {
+            speculations += 1;
+            speculativeUsd += usdFor(phaseTokens);
+          }
 
           const span = tracer.startSpan(`gm.${phase}`, {
             startTime: report.startedAt,
@@ -144,6 +151,8 @@ export function createMeters(): Meters {
             usd: usdFor(tokens),
             calls,
             cacheHits,
+            speculations,
+            speculativeUsd,
           };
           const span = tracer.startSpan('gm.turn', {
             startTime: openedAt ?? closedAt,

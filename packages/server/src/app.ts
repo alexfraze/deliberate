@@ -103,6 +103,13 @@ export interface AppOptions {
    * what a test measuring the cold path wants. `src/index.ts` reads it from the environment.
    */
   cacheSize?: number;
+  /**
+   * Speculative previews the server will pay for per player turn (ALE-40). `0` is the kill switch.
+   * Defaults to `MAX_SPECULATIONS_PER_TURN`; `src/index.ts` reads it from `GM_SPECULATE`.
+   */
+  speculationsPerTurn?: number;
+  /** Dollars of speculation per player turn (ALE-40). Defaults to `MAX_SPECULATION_USD`. */
+  speculationUsdPerTurn?: number;
   room?: RoomId;
   /**
    * Directory for JSONL session recordings. `null` (the default) records nothing, which is what
@@ -168,6 +175,12 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     ...(opts.budgets?.resolve ? { resolveBudgetMs: opts.budgets.resolve } : {}),
     ...(opts.budgets?.narrate ? { narrateBudgetMs: opts.budgets.narrate } : {}),
     ...(opts.cacheSize === undefined ? {} : { cacheSize: opts.cacheSize }),
+    ...(opts.speculationsPerTurn === undefined
+      ? {}
+      : { speculationsPerTurn: opts.speculationsPerTurn }),
+    ...(opts.speculationUsdPerTurn === undefined
+      ? {}
+      : { speculationUsdPerTurn: opts.speculationUsdPerTurn }),
     log: (message) => app.log.warn(message),
     // One `meter` line per turn (ALE-24), so what a turn cost is re-readable from the recording
     // months later instead of trusted from whatever printed it at the time.
@@ -228,6 +241,9 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     recording: recording?.path ?? null,
     // Preview and NPC-decision cache hit rates for this session (ALE-22).
     cache: gm.cache(),
+    // What the player's pointer has been allowed to spend this turn, and what it was refused
+    // (ALE-40). `budget: 0` means speculation is switched off on this server.
+    speculation: gm.speculation(),
     // p50/p95 after GO and cost per turn so far (ALE-24). The same numbers `pnpm meters` prints
     // from the recording afterwards, available while the session is still running.
     meters: gm.meters(),
