@@ -207,6 +207,75 @@
         max-height: 30vh;
         overflow-y: auto;
       }
+      /* The turn-order strip (ALE-19). Top-centre, clear of the panel on the right and the HUD at
+         the bottom left, because in a fight it is the thing you look at most. Hidden outright
+         when there is no encounter: an empty strip would imply an order that does not exist. */
+      #initiative {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        display: flex;
+        align-items: stretch;
+        gap: 6px;
+        pointer-events: none;
+        font-size: 12px;
+        text-shadow: 0 1px 2px #000;
+      }
+      #initiative .init-round {
+        align-self: center;
+        padding-right: 4px;
+        color: #7d8b99;
+        letter-spacing: 0.04em;
+      }
+      #initiative .init-chip {
+        min-width: 86px;
+        padding: 5px 8px;
+        background: rgba(11, 13, 16, 0.82);
+        border: 1px solid #1e2733;
+        border-radius: 6px;
+        opacity: 0.75;
+      }
+      /* Whose turn it is, at a glance: the whole point of the strip. */
+      #initiative .init-chip.is-current {
+        opacity: 1;
+        border-color: #ffd166;
+        box-shadow: 0 0 0 1px #ffd166;
+      }
+      #initiative .init-chip.is-next {
+        opacity: 0.95;
+        border-color: #33414f;
+      }
+      #initiative .init-chip.is-down {
+        opacity: 0.4;
+      }
+      #initiative .init-chip.is-down .init-name {
+        text-decoration: line-through;
+      }
+      #initiative .init-name {
+        color: #e6e6e6;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 140px;
+      }
+      #initiative .init-bar {
+        margin: 4px 0 3px;
+        height: 3px;
+        background: #1e2733;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      #initiative .init-fill {
+        height: 100%;
+        background: #6fbf73;
+      }
+      #initiative .init-chip.is-current .init-fill {
+        background: #9fd0ff;
+      }
+      #initiative .init-note {
+        color: #7d8b99;
+        white-space: nowrap;
+      }
       #overlay {
         position: fixed;
         inset: 0;
@@ -227,6 +296,7 @@
   <body>
     <div id="app"></div>
     <div id="overlay"></div>
+    <div id="initiative" hidden></div>
     <div id="hud"></div>
     <div id="deliberate"></div>
     <script type="module" src="/src/main.ts"></script>

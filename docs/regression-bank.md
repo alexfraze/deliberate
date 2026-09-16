@@ -142,3 +142,12 @@ spawn did not either, because the rejection reason names the templates that were
 now carries them (optional and omitted when empty, so older recordings are unaffected), the server
 passes the scene's templates to the recorder, and `gatehouse-gm-tools` is the entry that keeps it
 honest.
+
+## Watching a bank entry
+
+The bank is also the client's animation test material (ALE-19). `pnpm dev:client`, then
+`http://127.0.0.1:5173/?replay=<name>`, plays any recording in `recordings/bank/` back through the
+real renderer: the recording stands in for the server, and turns are paced by the animation queue
+draining, so a turn can never start drawing before the one before it has finished.
+`packages/client/src/replay.test.ts` steps the same sessions under node and asserts that nothing
+overlaps; `e2e/replay.spec.ts` checks that a whole fight renders without a page error.

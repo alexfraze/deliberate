@@ -1,12 +1,17 @@
-import type { DamageApplied, Diff, EntityMoved } from '@deliberate/protocol';
+import type { ConditionSet, DamageApplied, Diff, EntityMoved } from '@deliberate/protocol';
 import { describe, expect, it } from 'vitest';
 
 import {
   AnimationQueue,
   DAMAGE_MS,
+  DEATH_MS,
+  LUNGE_MS,
   MS_PER_TILE,
   animationFor,
+  collapseAmount,
   samplePath,
+  strikePhase,
+  type DamageAnimation,
   type QueueEvent,
 } from './animation.js';
 
@@ -30,6 +35,13 @@ const damaged: DamageApplied = {
 };
 
 const flagged: Diff = { type: 'FlagSet', key: 'tutorial', value: false };
+
+const died: ConditionSet = {
+  type: 'ConditionSet',
+  entity: 'dummy-a',
+  condition: 'dead',
+  active: true,
+};
 
 function kinds(events: QueueEvent[]): string[] {
   return events.map((e) => `${e.type}:${e.animation.diff.type}`);
@@ -74,9 +86,73 @@ describe('animationFor', () => {
   });
 
   it('gives damage a flash and everything else an instant beat', () => {
-    expect(animationFor(damaged).durationMs).toBe(DAMAGE_MS);
+    expect(animationFor(damaged).durationMs).toBe(LUNGE_MS + DAMAGE_MS);
     expect(animationFor(flagged).kind).toBe('instant');
     expect(animationFor(flagged).durationMs).toBe(0);
+  });
+
+  it('prepends a lunge only when somebody else struck the blow', () => {
+    const struck = animationFor(damaged) as DamageAnimation;
+    expect(struck.attacker).toBe('player');
+    expect(struck.lungeMs).toBe(LUNGE_MS);
+
+    // Poison, a fall, a trap: nothing swung, so the blow lands immediately.
+    const sourceless = animationFor({ ...damaged, source: null }) as DamageAnimation;
+    expect(sourceless.attacker).toBeNull();
+    expect(sourceless.durationMs).toBe(DAMAGE_MS);
+
+    // Self-inflicted: an entity cannot lunge at itself without leaving its own tile.
+    const selfHarm = animationFor({ ...damaged, source: damaged.target }) as DamageAnimation;
+    expect(selfHarm.attacker).toBeNull();
+  });
+
+  it('animates going down, and only when the condition turns on', () => {
+    expect(animationFor(died).kind).toBe('death');
+    expect(animationFor(died).durationMs).toBe(DEATH_MS);
+    // Coming back up is not a death animation, and neither is any other condition.
+    expect(animationFor({ ...died, active: false }).kind).toBe('instant');
+    expect(animationFor({ ...died, condition: 'prone' }).kind).toBe('instant');
+  });
+});
+
+describe('strikePhase', () => {
+  const struck = animationFor(damaged) as DamageAnimation;
+
+  it('does not flash the target until the attacker has finished swinging', () => {
+    const boundary = struck.lungeMs / struck.durationMs;
+    expect(strikePhase(struck, 0)).toEqual({ lunge: 0, hit: 0 });
+    expect(strikePhase(struck, boundary / 2).hit).toBe(0);
+    expect(strikePhase(struck, boundary / 2).lunge).toBeCloseTo(0.5, 5);
+    // Fully extended exactly as the blow lands, and the flash starts from there.
+    expect(strikePhase(struck, boundary).lunge).toBe(1);
+    expect(strikePhase(struck, boundary).hit).toBe(0);
+    expect(strikePhase(struck, boundary + (1 - boundary) / 2).hit).toBeCloseTo(1, 5);
+  });
+
+  it('brings the attacker home and the flash back to nothing by the end', () => {
+    const end = strikePhase(struck, 1);
+    expect(end.lunge).toBe(0);
+    expect(end.hit).toBeCloseTo(0, 5);
+    // Out-of-range time is clamped rather than extrapolated into a capsule flying off the map.
+    expect(strikePhase(struck, 4)).toEqual(strikePhase(struck, 1));
+    expect(strikePhase(struck, -4)).toEqual(strikePhase(struck, 0));
+  });
+
+  it('skips the swing entirely when nothing swung', () => {
+    const sourceless = animationFor({ ...damaged, source: null }) as DamageAnimation;
+    expect(sourceless.lungeMs).toBe(0);
+    expect(strikePhase(sourceless, 0.5)).toEqual({ lunge: 0, hit: 1 });
+    expect(strikePhase(sourceless, 0).hit).toBe(0);
+  });
+});
+
+describe('collapseAmount', () => {
+  it('folds a capsule flat by the end, easing out, and clamps', () => {
+    expect(collapseAmount(0)).toBe(0);
+    expect(collapseAmount(1)).toBe(1);
+    expect(collapseAmount(0.5)).toBeGreaterThan(0.5); // eased, so it settles rather than snaps
+    expect(collapseAmount(-1)).toBe(0);
+    expect(collapseAmount(9)).toBe(1);
   });
 });
 
@@ -127,7 +203,7 @@ describe('AnimationQueue ordering', () => {
     ]);
     expect(queue.current?.diff.type).toBe('DamageApplied');
 
-    const third = queue.advance(DAMAGE_MS);
+    const third = queue.advance(LUNGE_MS + DAMAGE_MS);
     expect(kinds(third)).toEqual(['progress:DamageApplied', 'finish:DamageApplied']);
     expect(queue.idle).toBe(true);
     expect(queue.advance(1000)).toEqual([]);
@@ -157,7 +233,7 @@ describe('AnimationQueue ordering', () => {
   it('spills leftover time into the next diff rather than dropping it', () => {
     const queue = new AnimationQueue();
     queue.enqueue([moved, damaged]);
-    const events = queue.advance(2 * MS_PER_TILE + DAMAGE_MS);
+    const events = queue.advance(2 * MS_PER_TILE + LUNGE_MS + DAMAGE_MS);
     expect(kinds(events)).toEqual([
       'start:EntityMoved',
       'progress:EntityMoved',

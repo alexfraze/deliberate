@@ -17,6 +17,7 @@ import { NO_GM, type GmAvailability } from './deliberate.js';
 import { fixtureScript, fixtureSnapshot, fixtureSnapshotMessage } from './fixtures/index.js';
 import { isWalkable, tileDistance } from './grid.js';
 import { encodeClientMessage, parseServerMessage } from './messages.js';
+import { parseRecording } from './replay.js';
 import { applyDiffsToView, isAlive, viewFromSnapshot, type ViewState } from './view.js';
 
 export interface TransportHandlers {
@@ -145,6 +146,76 @@ export function connectFixture(handlers: TransportHandlers): Transport {
       if (intent.kind === 'move') resolveMove(intent);
       else if (intent.kind === 'attack') resolveAttack(intent);
       else reject('end_turn is not implemented in fixture mode');
+    },
+    close() {
+      closed = true;
+      for (const timer of timers) clearTimeout(timer);
+      handlers.onStatus('closed');
+    },
+  };
+}
+
+/** Gap between replayed turns, on top of however long that turn's animations take to drain. */
+export const REPLAY_GAP_MS = 400;
+
+/**
+ * Plays a recorded session back through the real render path (ALE-19): `?replay=yard-brawl`.
+ *
+ * It is a transport because that is all a recording is from the client's side — a server that has
+ * already decided everything. Intents are ignored: you are watching, not playing. Turns are paced
+ * by the caller telling us when the animation queue has drained, so a long fight cannot outrun the
+ * renderer and stack two turns of diffs into one frame, which is precisely the overlap bug this
+ * exists to catch.
+ */
+export function connectReplay(
+  name: string,
+  handlers: TransportHandlers & { idle(): boolean },
+): Transport {
+  let closed = false;
+  const timers: ReturnType<typeof setTimeout>[] = [];
+
+  handlers.onStatus(`replay ${name}`);
+  void (async () => {
+    const response = await fetch(`/recordings/${encodeURIComponent(name)}.jsonl`).catch(() => null);
+    const session = response?.ok ? parseRecording(await response.text()) : null;
+    if (closed) return;
+    if (!session) {
+      handlers.onStatus(`replay ${name} (not found)`);
+      return;
+    }
+    handlers.onMessage({
+      type: 'snapshot',
+      room: DEFAULT_ROOM,
+      turn: 0,
+      snapshot: session.snapshot,
+      hash: '',
+    });
+    let index = 0;
+    const step = (): void => {
+      if (closed || index >= session.turns.length) return;
+      // Wait for the previous turn to finish drawing before sending the next one.
+      if (!handlers.idle()) {
+        timers.push(setTimeout(step, 60));
+        return;
+      }
+      const next = session.turns[index++];
+      if (next) {
+        handlers.onMessage({
+          type: 'diffs',
+          room: DEFAULT_ROOM,
+          turn: next.turn,
+          diffs: next.diffs,
+          hash: next.hash,
+        });
+      }
+      timers.push(setTimeout(step, REPLAY_GAP_MS));
+    };
+    timers.push(setTimeout(step, REPLAY_GAP_MS));
+  })();
+
+  return {
+    send() {
+      // A recording is not interactive. Dropping intents is the honest behaviour.
     },
     close() {
       closed = true;
