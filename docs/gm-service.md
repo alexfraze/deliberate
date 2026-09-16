@@ -51,6 +51,9 @@ Response:
 `ToolCallRecord` is `{call_id, tool, input, ok, kind, reason, diff, result, executed, latency_ms}`.
 `executed: false` marks a call the batch-stop discipline skipped.
 
+`policy` is a `{code, note}` program the game master wrote for the acting NPC this turn, or `null`
+(ALE-37). Additive; a caller that ignores it gets M1 behaviour. See "NPC code brains" below.
+
 Errors: `502` when the model could not be reached (`LLMUnavailable`), `503` when there are no
 credentials or the tool contract is missing. Neither ever leaves the engine mutated, because
 neither ever reached it.
@@ -75,6 +78,23 @@ Response — the blueprint's `{ok, reason, diff}`, plus two fields the GM loop n
 The GM service never raises on a transport failure: an unreachable or broken engine becomes
 `{ok: false, reason: "engine unreachable: …"}`. The loop must return a `tool_result` for every
 `tool_use` block the model emitted, and a dropped one corrupts the conversation.
+
+### Node → Python: `POST /policy`
+
+Run a policy the game master wrote earlier, for one NPC turn. **No model is called**, so this
+route needs no credentials and answers in tens of milliseconds rather than seconds.
+
+Request: `{session, turn, engine_token, state, acting, code}` — the same state summary and the
+same engine token `/turn` takes, plus the entity whose turn it is and the program to run.
+
+Response: `{session, turn, ok, error, trace, stdout}`. The `trace` is `ToolCallRecord[]`, the same
+shape `/turn` returns, because the calls went through the same door and came back with the same
+verdicts. `ok: false` means the _program_ failed — it raised, or the sandbox killed it for running
+too long. It never means the engine refused something: a refusal is an ordinary verdict on an
+ordinary trace line, and a policy is expected to read it and carry on.
+
+`503` when policies are disabled (`GM_POLICY_TOOL=0`). There is no `502` and no `LLMUnavailable`,
+because there is no model on this path.
 
 #### `engine_token`
 
@@ -134,6 +154,97 @@ One tool is the service's own and is not in the contract: `python`, a sandboxed 
 runner for reasoning about the board in code. Its one escape hatch is `gm_tool(name, **args)`,
 which goes to the same `/gm/tool` door and gets the same validation. It is the third wall,
 behind quoted player text and engine validation.
+
+## NPC code brains (ALE-37)
+
+In combat, every NPC turn was one sequential Claude call, and that was the whole latency tail:
+after-GO p50 was 8.1 s but p95 was ~27 s, and on `recordings/bank/yard-brawl.jsonl` resolve alone
+cost 37.9 s across ten turns against 0.0 s on `parley.jsonl`, which has no encounter. The fix is
+structural rather than a tuning knob: the game master writes the NPC's _strategy_ down once, as a
+Python program, and the server runs that program itself each turn until the situation changes.
+
+```
+resolve, one NPC turn:
+  1. decision cache  (state hash, entity)   -> replay the plan            ALE-22
+  2. skill cache     (entity, situation)    -> run the policy, no model   ALE-37   ~30 ms
+  3. the model       POST /turn                                                    ~4 s
+```
+
+### Generation: `save_policy`
+
+A service-owned local **query** tool, like `python` and for the same reason — the contract
+describes the engine's doors, and this opens none of them. On a resolve miss the model acts for
+the NPC as it always did, and the task line then asks it to write down the policy it used.
+
+The tool is offered on _every_ request rather than only the ones that want a policy. The tool
+block is rendered ahead of the system prompt, so a tool list that varied per turn would cost the
+cache prefix on every turn — far more than the tokens one unused schema costs. Whether a policy is
+_wanted_ is said in the task line, which is volatile content and belongs in the user message.
+
+**Nothing reaches the cache that has not already run.** `save_policy` parses the code and then
+smoke-runs it in the sandbox against a **dry-run** `gm_tool` that collects calls instead of
+forwarding them. A program that does not parse, raises, imports something that is not allowed,
+hangs, or calls no tool at all is refused there and then, with a reason written for the model to
+act on, and the calls it _would_ have made are reported back so the model can tell a policy that
+acts from one that merely runs. The refusal costs a turn's latency once, at generation time,
+rather than every turn for the rest of the encounter.
+
+### Execution, and why it is safe
+
+`POST /policy` runs the program in the **existing sandbox** — `sandbox.py` is not modified by this
+feature at all. Same process-group kill on timeout, same restricted builtins, same import
+allowlist, same bare environment, same single escape hatch. A policy is exactly as contained as a
+`python` snippet, because it is one; what is new is its lifetime, not its privileges.
+
+- **It cannot mutate.** Its only way out is `gm_tool(name, **arguments)` → `POST /gm/tool` → the
+  engine's own validation. A policy proposes; the engine disposes, rolls its own dice, and refuses
+  what it does not like with a player-readable reason. This is the third wall again, unchanged.
+- **It cannot hang.** The sandbox timeout (`GM_POLICY_TIMEOUT_SECONDS`, default 2 s — tighter than
+  the `python` tool's, because this one is on the critical path of every combat turn) kills the
+  process group, and Node carries the resolve budget on top of it.
+- **It cannot spend the encounter in one turn.** `MAX_POLICY_CALLS` (12) caps the tool calls one
+  execution may make; past the cap every further call comes back refused, which the policy reads
+  like any other verdict.
+- **The leakage guard still stands in front of it.** An NPC's `say` line reaches the player exactly
+  like narration does, so a policy's string arguments are scanned before the call leaves this
+  process, for the same reason the agent loop scans the model's.
+
+The **batch-stop discipline does not apply** to a policy, and that is deliberate. It exists because
+the _model_ planned a chain on an assumption the engine has just disproved. A policy is code: it can
+read the refusal and do something else, which is the entire reason for writing behaviour as a
+program. What bounds it is the call cap and the clock, not the first `no`.
+
+### Caching and invalidation (the Node side)
+
+Node owns the cache; this service remembers nothing between requests. The key is
+`packages/server/src/gm/cache.ts`'s `policyKey`, and the reasoning is written out there. In short:
+
+- **Per NPC, not per archetype.** The archetype is not in the snapshot — it is a template id the
+  engine keeps for `spawn` — so keying on it would mean either putting it into the entity (which
+  changes the state hash and reddens every recording in the bank) or keeping a second
+  entity-to-archetype table in the server, a copy of a fact the engine owns. And a policy is a plan
+  for a _person_: `content/npcs` gives each NPC its own goals.
+- **Plus a coarse situation**: whether initiative is running, which factions are still standing,
+  and how the NPC feels about the player in the three bands `content/npcs` already gates its
+  dialogue on. Positions, hit points and turn order are deliberately _not_ in the key, because the
+  policy re-reads all of them from `state` on the turn it runs. That is the difference between a
+  cached decision and a cached skill: the decision is frozen, the skill re-decides every time.
+
+A too-coarse key cannot produce a wrong-but-accepted turn, because a policy accepts nothing. What
+it can produce is a turn where the NPC lands nothing, and the loop reads that as the policy having
+expired: it is retired, and the model is asked. The same happens when the program crashes, times
+out, or the service cannot be reached at all — in which case the whole feature degrades to M1
+behaviour, which is slow and correct.
+
+### Replay does not know any of this happened
+
+A recorded session replays by re-applying its recorded **intents** through the engine. A policy's
+calls become intents through `room.commitGmCall`, exactly as the model's do, so the recording
+carries the same lines either way and `replay` reaches the same hashes with no key, no network and
+no Python. Policy _generation_ is a model call whose only durable trace is the mutations it caused;
+policy _execution_ produces ordinary validated intents. Neither is consulted on replay, for the
+same reason the ALE-22 decision cache is not: a cache is how an answer was arrived at, and the
+recording is about what the world did. `pnpm bank` is the tripwire, and it is green.
 
 ### Player text, and the three walls
 
@@ -270,7 +381,8 @@ run it. CI runs it as a separate `gm` job so the required `check` job never depe
 
 Environment: `GM_MODEL`, `GM_EFFORT`, `GM_MAX_TOKENS`, `GM_STREAM_MAX_TOKENS`, `GM_ENGINE_URL`
 (`stub` for the in-process stub engine), `GM_ENGINE_TIMEOUT_SECONDS`, `GM_TOOLS_PATH`,
-`GM_MAX_TOOL_STEPS`, `GM_INPUT_TOKEN_BUDGET`, `GM_PYTHON_TOOL`, `GM_PYTHON_TIMEOUT_SECONDS`.
+`GM_MAX_TOOL_STEPS`, `GM_INPUT_TOKEN_BUDGET`, `GM_PYTHON_TOOL`, `GM_PYTHON_TIMEOUT_SECONDS`,
+`GM_POLICY_TOOL`, `GM_POLICY_TIMEOUT_SECONDS`.
 
 ## Testing without credentials
 
