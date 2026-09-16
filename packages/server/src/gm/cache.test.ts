@@ -408,6 +408,8 @@ describe('speculative warming over the wire', () => {
 
     expect(h.asked, 'the pointer spent more than its allowance').toHaveLength(2);
     expect(h.loop.speculation()).toMatchObject({ turn: 0, spent: 2, dropped: 3, budget: 2 });
+    // The stub reports no usage, so the dollar ceiling never bit here: this was the count cap.
+    expect(h.loop.speculation().usd).toBe(0);
 
     // Committing moves the world on, so every cached key dies and the allowance starts again.
     await h.preview(step(1));
@@ -500,5 +502,77 @@ describe('a speculation the player contradicts', () => {
     h.waiting[1]?.();
     await h.loop.idle();
     expect(previews(h.socket).at(-1)?.text).toBe('answered');
+  });
+});
+
+/**
+ * The count cap is not the bound that matters in a fight. Since ALE-32 the game master takes the
+ * NPC turns *inside* the preview call, on the clone, so one speculation in an encounter pays for
+ * the player's action and every reaction to it — a number this loop cannot know before it makes
+ * the call. So there is a second ceiling, in dollars.
+ */
+describe('the speculation dollar ceiling', () => {
+  /** A game master whose every answer costs about fifty cents in output tokens. */
+  function expensiveHarness(usdPerTurn?: number) {
+    const engine = createEngine(gatehouseSnapshot(), {
+      seed: GATEHOUSE_SEED,
+      templates: TEMPLATES,
+    });
+    const room = createRoom({ engine });
+    const registry = createEngineRegistry({ engine, seed: GATEHOUSE_SEED, templates: TEMPLATES });
+    const asked: string[] = [];
+    const gm = {
+      turn: async (request: GmTurnRequest): Promise<GmTurnResponse> => {
+        asked.push(request.phase);
+        return {
+          narration: 'an expensive silence',
+          trace: [],
+          stop_reason: 'end_turn',
+          memory: {},
+          usage: { input_tokens: 0, output_tokens: 20_000 }, // $0.50 at list price
+        };
+      },
+    };
+    const loop = createGmLoop({
+      room,
+      registry,
+      gm,
+      ...(usdPerTurn === undefined ? {} : { speculationUsdPerTurn: usdPerTurn }),
+    });
+    room.setGmFrames((socket, message) => loop.handle(socket, message));
+    const socket = fakeSocket();
+    room.handle(socket, { type: 'join', room: DEFAULT_ROOM, protocol: 1 });
+    return { room, loop, socket, asked };
+  }
+
+  const hover = async (h: ReturnType<typeof expensiveHarness>, intent: Intent): Promise<void> => {
+    h.room.handle(h.socket, {
+      type: 'speculate',
+      room: DEFAULT_ROOM,
+      turn: h.room.turn(),
+      intent,
+    });
+    await h.loop.idle();
+  };
+
+  it('stops after one speculation the turn could not afford, though the count allows two', async () => {
+    const h = expensiveHarness();
+    await hover(h, step(1));
+    await hover(h, step(-1));
+
+    // The first always runs — nothing can price a call before making it. The second is refused on
+    // money rather than on count, which is the whole point of having both.
+    expect(h.asked).toHaveLength(1);
+    const stats = h.loop.speculation();
+    expect(stats).toMatchObject({ spent: 1, dropped: 1, budget: 2, usdBudget: 0.3 });
+    expect(stats.usd).toBeCloseTo(0.5, 5);
+  });
+
+  it('lets a generous ceiling through, so it is the money and not an accident', async () => {
+    const h = expensiveHarness(10);
+    await hover(h, step(1));
+    await hover(h, step(-1));
+    expect(h.asked).toHaveLength(2);
+    expect(h.loop.speculation()).toMatchObject({ spent: 2, dropped: 0 });
   });
 });

@@ -12,8 +12,8 @@ must still be JSON.
 `{ ok, engine, protocol, room, turn, recording, cache, speculation, meters, save, gm }`
 and needs no socket. `recording` is the JSONL file this session is being written to, or `null` when
 recording is off; `save` is the file `POST /save` writes, or `null` when saving is off.
-`speculation` is `{ turn, spent, dropped, budget }` — this turn's speculative preview allowance
-(ALE-40). `gm` is
+`speculation` is `{ turn, spent, dropped, budget, usd, usdBudget }` — this turn's speculative
+preview allowance and what it has cost (ALE-40). `gm` is
 `{ configured, reachable, model, narrateModel }` — whether `GM_SERVICE_URL` is set, whether the
 service answered its own `/healthz`, and which models it runs. The client reads it so it can say on
 screen whether a model is in the loop at all (ALE-39); `configured: false` means no game master
@@ -62,9 +62,15 @@ about a tenth of a second instead of tens of seconds.
 It carries a non-null `intent` and no `text`: a speculation is about what is under the cursor, and
 there is no half-typed sentence to guess at.
 
-**Every one of these costs a model call.** The server therefore caps how many it will honour per
-player turn (`MAX_SPECULATIONS_PER_TURN`, 2; `GM_SPECULATE=off` disables it), refuses to run two at
-once, refuses one while a real phase is in flight, and charges nothing for an intent the engine
+**Every one of these costs a model call — and in a fight, several.** Since ALE-32 the game master
+takes the NPC turns _inside_ the preview, on the clone, so one speculation in an encounter pays for
+the player's staged action and every reaction to it. The server therefore caps the pointer on two
+meters: a count (`MAX_SPECULATIONS_PER_TURN`, 2) and, because a count is not a sum of money, a
+per-turn dollar ceiling (`MAX_SPECULATION_USD`, $0.30 — two measured out-of-combat previews, or one
+costly in-combat one). The first speculation of a turn always runs, because nothing can price a call
+before making it; the honest bound is **at most two, and never a second once the first cost $0.30**.
+`GM_SPECULATE=off` disables it and `GM_SPECULATE_USD` moves the ceiling. It also refuses to run two
+at once, refuses one while a real phase is in flight, and charges nothing for an intent the engine
 refuses before the game master is asked. The client applies the same rules first and adds a dwell
 timer, but the client is a browser and the server does not trust it. Anything wrong with a
 `speculate` frame — stale turn, no budget left — is answered with **silence**: the player asked for

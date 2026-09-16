@@ -108,6 +108,8 @@ export interface AppOptions {
    * Defaults to `MAX_SPECULATIONS_PER_TURN`; `src/index.ts` reads it from `GM_SPECULATE`.
    */
   speculationsPerTurn?: number;
+  /** Dollars of speculation per player turn (ALE-40). Defaults to `MAX_SPECULATION_USD`. */
+  speculationUsdPerTurn?: number;
   room?: RoomId;
   /**
    * Directory for JSONL session recordings. `null` (the default) records nothing, which is what
@@ -176,6 +178,9 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     ...(opts.speculationsPerTurn === undefined
       ? {}
       : { speculationsPerTurn: opts.speculationsPerTurn }),
+    ...(opts.speculationUsdPerTurn === undefined
+      ? {}
+      : { speculationUsdPerTurn: opts.speculationUsdPerTurn }),
     log: (message) => app.log.warn(message),
     // One `meter` line per turn (ALE-24), so what a turn cost is re-readable from the recording
     // months later instead of trusted from whatever printed it at the time.

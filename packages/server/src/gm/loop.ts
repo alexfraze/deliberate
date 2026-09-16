@@ -26,6 +26,8 @@ import {
 import { LIVE_ENGINE_TOKEN, type EngineRegistry } from './engines.js';
 import {
   createMeters,
+  tokensFrom,
+  usdFor,
   type Meters,
   type MeterSummary,
   type TurnMeter,
@@ -87,6 +89,22 @@ const MAX_NPC_TURNS = 12;
  */
 export const MAX_SPECULATIONS_PER_TURN = 2;
 
+/**
+ * And the ceiling that actually bounds the bill: US dollars of speculation per player turn.
+ *
+ * A count is the wrong unit on its own, because **a preview is not one model call's worth of
+ * work**. Since ALE-32 the game master takes the NPC turns *inside* the preview, on the clone, so
+ * in an encounter one speculation pays for the player's staged action and every NPC reaction to
+ * it. Out of combat a speculation measured $0.11–$0.14 on `claude-opus-5`; in a fight it is
+ * whatever that turn's NPC traffic costs, which is not a number this file can know in advance.
+ *
+ * So the count cap stops the pointer from making many cheap guesses, and this stops it from making
+ * two expensive ones. $0.30 is two measured out-of-combat previews, or one costly in-combat one.
+ * The first speculation of a turn always runs — nothing can price a call before making it — so the
+ * honest statement of the bound is **at most two, and never a second once the first cost $0.30**.
+ */
+export const MAX_SPECULATION_USD = 0.3;
+
 /** The GM's own brain policy. `content/npcs` stamps it on all three archetypes (ALE-16). */
 export const GM_BRAIN_POLICY = 'gm';
 
@@ -100,6 +118,9 @@ export interface SpeculationStats {
   dropped: number;
   /** `speculationsPerTurn`. Zero means speculation is off. */
   budget: number;
+  /** What those speculations actually cost this turn, and the ceiling that stops the next one. */
+  usd: number;
+  usdBudget: number;
 }
 
 export interface PendingPreview {
@@ -130,6 +151,8 @@ export interface GmLoopOptions {
    * not a protocol change.
    */
   speculationsPerTurn?: number;
+  /** Dollars of speculation per player turn. See `MAX_SPECULATION_USD` for why both exist. */
+  speculationUsdPerTurn?: number;
   /** Memory blocks to start from. Non-empty when resuming a save (ALE-23). */
   memory?: MemoryBlocks;
   /** Somewhere to note a GM failure. Defaults to nothing; `buildApp` passes the Fastify logger. */
@@ -211,8 +234,17 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   /** Set when a real frame arrives, so speculation stops between intents instead of racing it. */
   let abandonSpeculation = false;
   const speculationBudget = Math.max(0, options.speculationsPerTurn ?? MAX_SPECULATIONS_PER_TURN);
+  const speculationUsd = Math.max(0, options.speculationUsdPerTurn ?? MAX_SPECULATION_USD);
+  const freshSpeculation = (turn: number): SpeculationStats => ({
+    turn,
+    spent: 0,
+    dropped: 0,
+    budget: speculationBudget,
+    usd: 0,
+    usdBudget: speculationUsd,
+  });
   /** The per-turn spend, and the key of the one speculation allowed to be in the air (ALE-40). */
-  let speculation: SpeculationStats = { turn: -1, spent: 0, dropped: 0, budget: speculationBudget };
+  let speculation: SpeculationStats = freshSpeculation(-1);
   let speculatingKey: string | null = null;
   let speculationAbort: AbortController | null = null;
   /**
@@ -388,6 +420,9 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       // A turn the game master never answered is not memoised: a timeout is a fact about one
       // moment, and caching it would make a blip permanent for as long as the world stands still.
       if (caching && !answer.failed) previews.set(key, entry);
+      // Charged against this turn's dollar ceiling, not just its count: a speculation in a fight
+      // pays for the NPC turns the game master took inside it, and those are not free.
+      if (phase === 'speculate') speculation.usd += usdFor(tokensFrom(answer.usage));
       meter().record(phase, {
         startedAt,
         endedAt: Date.now(),
@@ -653,11 +688,15 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
    * and the guessing starts again from nothing.
    */
   const budgetLeft = (): number => {
-    if (speculation.turn !== room.turn()) {
-      speculation = { turn: room.turn(), spent: 0, dropped: 0, budget: speculationBudget };
-    }
+    if (speculation.turn !== room.turn()) speculation = freshSpeculation(room.turn());
     return speculation.budget - speculation.spent;
   };
+
+  /**
+   * Whether another speculation may be *started*: allowance left on both meters. The dollar meter
+   * is the one that matters in a fight, where one speculation pays for every NPC reaction too.
+   */
+  const affordable = (): boolean => budgetLeft() > 0 && speculation.usd < speculation.usdBudget;
 
   const drop = (): Promise<void> => {
     budgetLeft();
@@ -673,7 +712,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     // real phase in the air, one speculation already running, or this turn's pointer having spent
     // its allowance. The client applies the same rules first; this is the copy that counts.
     if (!caching || !gm) return inFlight;
-    if (busy || speculatingKey !== null || budgetLeft() <= 0) return drop();
+    if (busy || speculatingKey !== null || !affordable()) return drop();
     abandonSpeculation = false;
     const controller = new AbortController();
     speculationAbort = controller;
@@ -682,7 +721,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       .catch(() => {})
       .then(async () => {
         for (const intent of intents) {
-          if (abandonSpeculation || busy || budgetLeft() <= 0) return;
+          if (abandonSpeculation || busy || !affordable()) return;
           // Charged before the call, not after: the budget bounds what may be *started*, and a
           // crash between the two would otherwise hand the pointer a free retry.
           speculation.spent += 1;

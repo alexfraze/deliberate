@@ -4,6 +4,7 @@ import { buildApp } from './app.js';
 import { DEFAULT_CACHE_SIZE } from './gm/cache.js';
 import {
   MAX_SPECULATIONS_PER_TURN,
+  MAX_SPECULATION_USD,
   NARRATE_BUDGET_MS,
   PREVIEW_BUDGET_MS,
   RESOLVE_BUDGET_MS,
@@ -64,6 +65,9 @@ const speculationsPerTurn =
     : speculateEnv === 'off'
       ? 0
       : Number(speculateEnv) || 0;
+// And the ceiling that actually bounds the bill. A preview in combat pays for the NPC turns the
+// game master takes inside it, so "two speculations" is not a sum of money; this is.
+const speculationUsdPerTurn = Number(process.env['GM_SPECULATE_USD'] ?? MAX_SPECULATION_USD);
 
 const app = await buildApp({
   logger: true,
@@ -74,13 +78,14 @@ const app = await buildApp({
   budgets,
   ...(Number.isFinite(cacheSize) ? { cacheSize } : {}),
   speculationsPerTurn,
+  ...(Number.isFinite(speculationUsdPerTurn) ? { speculationUsdPerTurn } : {}),
   gm: gmUrl
     ? httpGmService({ baseUrl: gmUrl, timeoutMs: Math.max(...Object.values(budgets)) })
     : null,
 });
 if (gmUrl) app.log.info({ gm: gmUrl }, 'game master service');
 app.log.info(
-  { perTurn: speculationsPerTurn },
+  { perTurn: speculationsPerTurn, usdPerTurn: speculationUsdPerTurn },
   speculationsPerTurn > 0 ? 'speculative preview warming is on' : 'speculative warming is off',
 );
 if (app.recording) app.log.info({ file: app.recording.path }, 'recording this session');
