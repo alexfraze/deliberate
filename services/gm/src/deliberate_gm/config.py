@@ -100,6 +100,14 @@ class Settings:
     #: The sandboxed `python` tool. Off by default in `preview`; see docs/gm-service.md.
     python_tool_enabled: bool = True
     python_timeout_seconds: int = 5
+    #: NPC code brains (ALE-37): the `save_policy` tool and the `/policy` route. `GM_POLICY_TOOL=0`
+    #: turns both off and the server falls back to asking the model for every NPC turn, which is
+    #: the M1 behaviour -- correct, and slow in exactly the way the issue measured.
+    policy_tool_enabled: bool = True
+    #: A policy is one NPC's turn, not a research project. Tighter than the `python` tool's
+    #: budget because this one is on the critical path of every combat turn: a policy that needs
+    #: more than two seconds is a policy the fallback should be taking instead.
+    policy_timeout_seconds: int = 2
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -120,6 +128,8 @@ class Settings:
             input_token_budget=_env_int("GM_INPUT_TOKEN_BUDGET", 12_000),
             python_tool_enabled=os.environ.get("GM_PYTHON_TOOL", "1") == "1",
             python_timeout_seconds=_env_int("GM_PYTHON_TIMEOUT_SECONDS", 5),
+            policy_tool_enabled=os.environ.get("GM_POLICY_TOOL", "1") == "1",
+            policy_timeout_seconds=_env_int("GM_POLICY_TIMEOUT_SECONDS", 2),
         )
 
 

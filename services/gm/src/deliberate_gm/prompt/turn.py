@@ -15,8 +15,15 @@ PHASE_TASK = {
         "Narrate the result in a few sentences."
     ),
     "resolve": (
-        "Initiative is running. Act for the entities you control, one validated call at a "
-        "time, and narrate what the engine's verdicts say happened."
+        "Initiative is running. Act for the entity named by `acting`, one validated call at a "
+        "time, and narrate what the engine's verdicts say happened.\n"
+        "\n"
+        "Then save a policy for that NPC with `save_policy`, so the server can take its later "
+        "turns without asking you (ALE-37). You are being asked because there is no usable "
+        "policy for this NPC in this situation -- either it has never had one, the situation "
+        "has changed under it, or the one it had stopped working. Write the strategy you just "
+        "used, generally enough that it still reads correctly two turns from now when everyone "
+        "has moved."
     ),
     "narrate": (
         "The engine has already resolved this turn. Narrate what its diffs say happened. "
