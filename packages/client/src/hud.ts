@@ -1,10 +1,13 @@
 /**
- * The DOM layer over the canvas: the status readout and the floating damage numbers.
+ * The DOM layer over the canvas: the status readout, the turn-order strip and the floating damage
+ * numbers.
  *
  * Damage numbers are DOM rather than sprites on purpose — the scene projects an entity to screen
  * coordinates and the browser does the text, which keeps font handling out of both render
- * backends and costs nothing per frame.
+ * backends and costs nothing per frame. The same argument applies to the initiative chips.
  */
+import { healthFraction, type InitiativeView } from './initiative.js';
+
 export interface FloatingNumber {
   /** `t` is the animation's normalised time; the number drifts up and fades as it approaches 1. */
   update(x: number, y: number, t: number): void;
@@ -22,6 +25,12 @@ export interface Hud {
   /** One line of transient feedback ("Moving to (4, 5)…"). */
   setHint(hint: string | null): void;
   floatNumber(text: string, color: string): FloatingNumber;
+  /**
+   * The turn-order strip (ALE-19). Whose turn it is was a sentence on the HUD, which is not
+   * something you can read mid-fight; this is the same facts as chips you can take in at a
+   * glance. Pass the view; outside an encounter there is no order and the strip disappears.
+   */
+  setInitiative(view: InitiativeView | null): void;
 }
 
 function line(label: string, value: string): string {
@@ -35,7 +44,68 @@ function escapeHtml(value: string): string {
   );
 }
 
+/**
+ * Renders the turn-order strip into `root`.
+ *
+ * Rebuilt wholesale on every change rather than diffed: an encounter is four or five chips, the
+ * call happens once per animation that finishes, and a full rebuild cannot leave a stale
+ * highlight on a chip that is no longer current — which is the only bug this thing can have.
+ * Names go in through `textContent`; they are content, some of it from the model.
+ */
+function renderInitiative(root: HTMLElement, view: InitiativeView | null): void {
+  if (!view) {
+    root.replaceChildren();
+    root.hidden = true;
+    return;
+  }
+  root.hidden = false;
+  const round = document.createElement('div');
+  round.className = 'init-round';
+  round.textContent = `round ${view.round}`;
+  const chips = view.chips.map((chip) => {
+    const node = document.createElement('div');
+    node.className = 'init-chip';
+    if (chip.current) node.classList.add('is-current');
+    if (chip.next) node.classList.add('is-next');
+    if (chip.down) node.classList.add('is-down');
+
+    const name = document.createElement('div');
+    name.className = 'init-name';
+    name.textContent = chip.name;
+
+    const bar = document.createElement('div');
+    bar.className = 'init-bar';
+    const fill = document.createElement('div');
+    fill.className = 'init-fill';
+    fill.style.width = `${Math.round(healthFraction(chip) * 100)}%`;
+    bar.appendChild(fill);
+
+    const note = document.createElement('div');
+    note.className = 'init-note';
+    // Only ever one of these: what the acting entity has left, or why a chip is greyed out, or
+    // that this one is up next. Anything more is a second sentence to read mid-fight.
+    note.textContent = chip.down
+      ? 'down'
+      : chip.current
+        ? (chip.economy ?? '')
+        : chip.next
+          ? 'up next'
+          : `${chip.hp}/${chip.maxHp}`;
+
+    node.append(name, bar, note);
+    return node;
+  });
+  root.replaceChildren(round, ...chips);
+}
+
 export function createHud(hudElement: HTMLElement, overlay: HTMLElement): Hud {
+  // Its own element rather than part of the HUD's innerHTML: the strip is structure, and rebuilding
+  // it as a string would mean escaping model-authored names by hand on every frame.
+  const strip = document.getElementById('initiative') ?? document.createElement('div');
+  strip.id = 'initiative';
+  strip.hidden = true;
+  if (!strip.isConnected) (hudElement.parentElement ?? document.body).appendChild(strip);
+
   const state = {
     backend: 'starting',
     status: 'connecting',
@@ -85,6 +155,9 @@ export function createHud(hudElement: HTMLElement, overlay: HTMLElement): Hud {
     setHint(hint) {
       state.hint = hint;
       render();
+    },
+    setInitiative(view) {
+      renderInitiative(strip, view);
     },
     floatNumber(text, color) {
       const element = document.createElement('div');

@@ -62,6 +62,18 @@ export interface GameScene {
   placeEntity(id: EntityId, x: number, y: number): void;
   /** 0 = untouched, 1 = fully flashed. Used by the damage animation. */
   flashEntity(id: EntityId, amount: number): void;
+  /**
+   * Leans `attacker` toward `target` by `amount` (0 = home, 1 = at the target's edge). The swing
+   * half of a strike; `syncEntities` puts the attacker back on its tile when the animation ends.
+   */
+  lungeEntity(attacker: EntityId, target: EntityId, amount: number): void;
+  /**
+   * How far an entity has folded up: 0 standing, 1 flat. `null` hands the pose back to the view,
+   * which draws anything with no hp left as down. The death animation drives this, and
+   * `syncEntities` respects it — otherwise the diff that dropped hp to zero would snap the capsule
+   * flat a frame before the death animation had a chance to play it.
+   */
+  setCollapse(id: EntityId, amount: number | null): void;
   setHover(tile: Tile | null): void;
   /** The tile the player clicked with nothing selected. Null clears the marker. */
   setTileMarker(tile: Tile | null): void;
@@ -136,6 +148,10 @@ export function createGameScene(): GameScene {
   const raycaster = new Raycaster();
   const entityMeshes = new Map<EntityId, Mesh<CapsuleGeometry, MeshStandardMaterial>>();
   const baseColors = new Map<EntityId, Color>();
+  /** Entities whose pose an animation is driving, so `syncEntities` leaves them alone. */
+  const collapsing = new Map<EntityId, number>();
+  /** Where each capsule was last parked, so a lunge leans from home instead of compounding. */
+  const homes = new Map<EntityId, Vector3>();
   let map: MapRecord | null = null;
   let selected: EntityId | null = null;
   let zoom = 1;
@@ -183,7 +199,20 @@ export function createGameScene(): GameScene {
     if (!mesh || !map) return;
     const point = tileToWorld(map, x, y);
     mesh.position.set(point.x, point.y + CAPSULE_HALF, point.z);
+    homes.set(id, mesh.position.clone());
     if (selected === id) ring.position.set(point.x, point.y + 0.03, point.z);
+  };
+
+  /** 0 standing, 1 flat. An animation's override wins over the view's "this one has no hp left". */
+  const poseOf = (id: EntityId, alive: boolean): number => collapsing.get(id) ?? (alive ? 0 : 1);
+
+  const applyPose = (id: EntityId, alive: boolean): void => {
+    const mesh = entityMeshes.get(id);
+    if (!mesh) return;
+    const down = poseOf(id, alive);
+    mesh.scale.set(1, 1 - 0.75 * down, 1);
+    mesh.material.opacity = 1 - 0.45 * down;
+    mesh.material.transparent = down > 0;
   };
 
   const syncEntities = (view: ViewState): void => {
@@ -193,6 +222,8 @@ export function createGameScene(): GameScene {
       mesh.material.dispose();
       entityMeshes.delete(id);
       baseColors.delete(id);
+      collapsing.delete(id);
+      homes.delete(id);
     }
     for (const entity of Object.values(view.entities)) {
       let mesh = entityMeshes.get(entity.id);
@@ -207,10 +238,7 @@ export function createGameScene(): GameScene {
         baseColors.set(entity.id, color);
         actors.add(mesh);
       }
-      const down = !isAlive(entity);
-      mesh.scale.set(1, down ? 0.25 : 1, 1);
-      mesh.material.opacity = down ? 0.55 : 1;
-      mesh.material.transparent = down;
+      applyPose(entity.id, isAlive(entity));
       placeEntity(entity.id, entity.tile.x, entity.tile.y);
     }
   };
@@ -220,6 +248,29 @@ export function createGameScene(): GameScene {
     const base = baseColors.get(id);
     if (!mesh || !base) return;
     mesh.material.color.copy(base).lerp(new Color(0xff5a4a), Math.min(1, Math.max(0, amount)));
+  };
+
+  const lungeEntity = (attacker: EntityId, target: EntityId, amount: number): void => {
+    const from = entityMeshes.get(attacker);
+    const to = entityMeshes.get(target);
+    const home = homes.get(attacker);
+    if (!from || !to || !home) return;
+    // Always from home, never from wherever the last frame left it: lerping in place would walk
+    // the attacker into its target over the course of the swing.
+    // A lean, not a teleport — at full extension it has closed most of the gap but is still
+    // standing on its own side of it, so two capsules never occupy one tile.
+    from.position.copy(home).lerp(to.position, Math.min(1, Math.max(0, amount)) * 0.45);
+  };
+
+  const setCollapse = (id: EntityId, amount: number | null): void => {
+    if (amount === null) {
+      // Hand the pose back without guessing at it: the caller clears the override at the end of
+      // the animation and then syncs, and the view is the only thing that knows if this one lived.
+      collapsing.delete(id);
+      return;
+    }
+    collapsing.set(id, Math.min(1, Math.max(0, amount)));
+    applyPose(id, false);
   };
 
   const setHover = (tile: Tile | null): void => {
@@ -392,6 +443,8 @@ export function createGameScene(): GameScene {
     syncEntities,
     placeEntity,
     flashEntity,
+    lungeEntity,
+    setCollapse,
     setHover,
     setTileMarker,
     setZoom,

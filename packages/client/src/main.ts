@@ -16,16 +16,26 @@ import {
 } from '@deliberate/protocol';
 import { REVISION, Vector2 } from 'three/webgpu';
 
-import { AnimationQueue, samplePath, type Animation, type QueueEvent } from './animation.js';
+import {
+  AnimationQueue,
+  collapseAmount,
+  samplePath,
+  strikePhase,
+  type Animation,
+  type QueueEvent,
+} from './animation.js';
 import { cellAt } from './grid.js';
 import { createHud, type FloatingNumber } from './hud.js';
+import { initiativeView } from './initiative.js';
 import { createDeliberatePanel } from './panel.js';
 import { createRenderer } from './renderer.js';
 import { createGameScene } from './scene.js';
 import { resolvePick } from './selection.js';
 import { NO_GM } from './deliberate.js';
+import { replayName } from './replay.js';
 import {
   connectFixture,
+  connectReplay,
   connectWebSocket,
   fetchGmHealth,
   useFixtureMode,
@@ -100,6 +110,7 @@ function describeSelection(id: EntityId | null): string | null {
 /** The HUD's turn line and the panel's encounter note come from the same fact: is initiative on. */
 function refreshTurn(): void {
   hud.setTurn(describeTurn());
+  hud.setInitiative(initiativeView(view));
   panel.setEncounter(view.initiative !== null);
 }
 
@@ -173,14 +184,28 @@ function onMessage(message: ServerMessage): void {
   }
 }
 
-const transport: Transport = fixtureMode
-  ? connectFixture({ onMessage, onStatus: (status) => hud.setStatus(`fixture (${status})`) })
-  : connectWebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`, {
+const replay = replayName(location.search, location.hash);
+
+const transport: Transport = replay
+  ? // Watch a recorded session play back through the real render path (ALE-19). Turns are paced by
+    // the animation queue draining, so nothing ever overlaps the turn before it.
+    connectReplay(replay, {
       onMessage,
       onStatus: (status) => hud.setStatus(status),
-    });
+      idle: () => queue.idle,
+    })
+  : fixtureMode
+    ? connectFixture({ onMessage, onStatus: (status) => hud.setStatus(`fixture (${status})`) })
+    : connectWebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`, {
+        onMessage,
+        onStatus: (status) => hud.setStatus(status),
+      });
 
 // --- animation -------------------------------------------------------------------------------
+
+/** A killing blow gets a brighter number than a scratch, so a death is legible at a glance. */
+const DAMAGE_COLOR = '#ff6b5a';
+const KILL_COLOR = '#ffd166';
 
 function onAnimationEvent(event: QueueEvent): void {
   const animation = event.animation;
@@ -189,18 +214,32 @@ function onAnimationEvent(event: QueueEvent): void {
     scene.placeEntity(animation.diff.entity, point.x, point.y);
   }
   if (animation.kind === 'damage') {
-    const { target, amount } = animation.diff;
+    const { target, amount, hpAfter } = animation.diff;
     if (event.type === 'start') {
-      floats.set(animation, hud.floatNumber(`-${amount}`, '#ff6b5a'));
+      floats.set(animation, hud.floatNumber(`-${amount}`, hpAfter > 0 ? DAMAGE_COLOR : KILL_COLOR));
     } else if (event.type === 'progress') {
-      scene.flashEntity(target, Math.sin(Math.min(1, event.t) * Math.PI));
+      // One diff, two beats: the attacker swings, then the target takes it. `strikePhase` owns
+      // where the boundary is so the flash cannot start before the blow lands.
+      const { lunge, hit } = strikePhase(animation, event.t);
+      if (animation.attacker !== null) scene.lungeEntity(animation.attacker, target, lunge);
+      scene.flashEntity(target, hit);
       const { width, height } = viewport();
       const screen = scene.projectEntity(target, width, height);
-      if (screen) floats.get(animation)?.update(screen.x, screen.y, event.t);
+      // The number only starts drifting once it has been struck, so it rises out of the impact.
+      if (screen) floats.get(animation)?.update(screen.x, screen.y, hit > 0 ? event.t : 0);
     } else {
       scene.flashEntity(target, 0);
       floats.get(animation)?.remove();
       floats.delete(animation);
+    }
+  }
+  if (animation.kind === 'death') {
+    const id = animation.diff.entity;
+    if (event.type === 'progress') {
+      scene.setCollapse(id, collapseAmount(event.t));
+    } else if (event.type === 'finish') {
+      // Hand the pose back to the view, which is about to be told this one is down.
+      scene.setCollapse(id, null);
     }
   }
   if (event.type === 'finish') {

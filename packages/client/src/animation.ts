@@ -7,7 +7,14 @@
  * that the scene turns into meshes moving. Time is handed in as milliseconds so tests can step it
  * deterministically.
  */
-import type { DamageApplied, Diff, EntityMoved, Tile } from '@deliberate/protocol';
+import type {
+  ConditionSet,
+  DamageApplied,
+  Diff,
+  EntityId,
+  EntityMoved,
+  Tile,
+} from '@deliberate/protocol';
 
 /** Milliseconds spent per tile stepped through by `EntityMoved`. */
 export const MS_PER_TILE = 180;
@@ -15,8 +22,24 @@ export const MS_PER_TILE = 180;
 /** How long a `DamageApplied` flash and its floating number last. */
 export const DAMAGE_MS = 650;
 
+/**
+ * The attacker's lunge, prepended to a `DamageApplied` that names a source.
+ *
+ * There is no attack diff in the protocol and there should not be one: an attack that connects
+ * *is* damage, and the engine emits exactly what changed. So the swing is a phase of the damage
+ * animation rather than an animation of its own — which also means it cannot overlap the hit it
+ * causes, because there is only ever one animation in flight.
+ */
+export const LUNGE_MS = 220;
+
+/** A `dead`/`unconscious` condition: the capsule folds up over this long. */
+export const DEATH_MS = 520;
+
 /** Diffs with nothing to show still occupy a beat so the HUD can keep up. */
 export const INSTANT_MS = 0;
+
+/** Conditions that mean an entity has gone down and should be animated doing so. */
+const DEATH_CONDITIONS = new Set(['dead', 'dying', 'unconscious']);
 
 export interface MoveAnimation {
   kind: 'move';
@@ -29,6 +52,20 @@ export interface MoveAnimation {
 export interface DamageAnimation {
   kind: 'damage';
   diff: DamageApplied;
+  /**
+   * Who swung, when the blow came from somebody. Null for damage with no attacker — poison, a
+   * fall, a trap — which skips the lunge and lands immediately.
+   */
+  attacker: EntityId | null;
+  /** How much of `durationMs` the lunge occupies. 0 when there is no attacker. */
+  lungeMs: number;
+  durationMs: number;
+}
+
+/** An entity going down: `ConditionSet` turning `dead` (or `unconscious`) on. */
+export interface DeathAnimation {
+  kind: 'death';
+  diff: ConditionSet;
   durationMs: number;
 }
 
@@ -38,7 +75,7 @@ export interface InstantAnimation {
   durationMs: number;
 }
 
-export type Animation = MoveAnimation | DamageAnimation | InstantAnimation;
+export type Animation = MoveAnimation | DamageAnimation | DeathAnimation | InstantAnimation;
 
 export type QueueEvent =
   | { type: 'start'; animation: Animation }
@@ -63,9 +100,39 @@ export function animationFor(diff: Diff): Animation {
     };
   }
   if (diff.type === 'DamageApplied') {
-    return { kind: 'damage', diff, durationMs: DAMAGE_MS };
+    const attacker = diff.source !== null && diff.source !== diff.target ? diff.source : null;
+    const lungeMs = attacker === null ? 0 : LUNGE_MS;
+    return { kind: 'damage', diff, attacker, lungeMs, durationMs: lungeMs + DAMAGE_MS };
+  }
+  if (diff.type === 'ConditionSet' && diff.active && DEATH_CONDITIONS.has(diff.condition)) {
+    return { kind: 'death', diff, durationMs: DEATH_MS };
   }
   return { kind: 'instant', diff, durationMs: INSTANT_MS };
+}
+
+/**
+ * The two halves of a strike at normalised time `t`: how far the attacker has lunged toward its
+ * target (out and back, peaking as the blow lands) and how hard the target is flashing.
+ *
+ * Split out as a pure function because it is the part with arithmetic in it, and because both
+ * halves must agree on where the boundary is — the flash has to start exactly when the lunge
+ * tops out, or the hit reads as unrelated to the swing.
+ */
+export function strikePhase(animation: DamageAnimation, t: number): { lunge: number; hit: number } {
+  const clamped = Math.min(1, Math.max(0, t));
+  const boundary = animation.durationMs > 0 ? animation.lungeMs / animation.durationMs : 0;
+  if (boundary <= 0) return { lunge: 0, hit: Math.sin(clamped * Math.PI) };
+  if (clamped < boundary) return { lunge: clamped / boundary, hit: 0 };
+  // After impact the attacker recovers over the first part of the flash, so the two overlap the
+  // way a real swing does rather than the lunge snapping back before the target reacts.
+  const after = (clamped - boundary) / (1 - boundary);
+  return { lunge: Math.max(0, 1 - after * 2.5), hit: Math.sin(after * Math.PI) };
+}
+
+/** How far a dying capsule has folded up at normalised time `t`. Eased, so it settles. */
+export function collapseAmount(t: number): number {
+  const clamped = Math.min(1, Math.max(0, t));
+  return 1 - (1 - clamped) * (1 - clamped);
 }
 
 /**
