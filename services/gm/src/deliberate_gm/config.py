@@ -44,7 +44,13 @@ DEFAULT_NARRATE_MODEL = "claude-sonnet-5"
 #: is worse than the table says (27-30 s against 23.5 s). The p95 and the price are not properties
 #: of the effort setting at all, they are properties of the *session*: the combat run's tail is
 #: 2.6x the dialogue run's, because a turn where several NPCs each cost a model call is several
-#: model calls. That is ALE-37 (NPC code brains), not effort tuning.
+#: model calls.
+#:
+#: That last sentence was blamed on ALE-37 (NPC code brains) and the blame was misplaced. ALE-37
+#: measured it: across ten live combat turns the service saw **one** `resolve` call. The NPC turns
+#: are taken inside the *preview* call, on the clone, and GO re-validates them in 2-6 ms -- so the
+#: several model calls are billed to preview, where `yard-brawl` p50 is 21-30 s, and after-GO is
+#: comparatively cheap. See `docs/gm-service.md`, "What the measurement actually showed".
 #:
 #: `pnpm meters recordings/bank/<name>.jsonl` re-prints both rows with no key and no network.
 DEFAULT_EFFORT = "medium"
@@ -100,6 +106,14 @@ class Settings:
     #: The sandboxed `python` tool. Off by default in `preview`; see docs/gm-service.md.
     python_tool_enabled: bool = True
     python_timeout_seconds: int = 5
+    #: NPC code brains (ALE-37): the `save_policy` tool and the `/policy` route. `GM_POLICY_TOOL=0`
+    #: turns both off and the server falls back to asking the model for every NPC turn, which is
+    #: the M1 behaviour -- correct, and slow in exactly the way the issue measured.
+    policy_tool_enabled: bool = True
+    #: A policy is one NPC's turn, not a research project. Tighter than the `python` tool's
+    #: budget because this one is on the critical path of every combat turn: a policy that needs
+    #: more than two seconds is a policy the fallback should be taking instead.
+    policy_timeout_seconds: int = 2
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -120,6 +134,8 @@ class Settings:
             input_token_budget=_env_int("GM_INPUT_TOKEN_BUDGET", 12_000),
             python_tool_enabled=os.environ.get("GM_PYTHON_TOOL", "1") == "1",
             python_timeout_seconds=_env_int("GM_PYTHON_TIMEOUT_SECONDS", 5),
+            policy_tool_enabled=os.environ.get("GM_POLICY_TOOL", "1") == "1",
+            policy_timeout_seconds=_env_int("GM_POLICY_TIMEOUT_SECONDS", 2),
         )
 
 

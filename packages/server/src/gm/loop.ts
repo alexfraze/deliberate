@@ -14,9 +14,11 @@ import type { Room, RoomSocket } from '../room.js';
 import {
   createTurnCache,
   decisionKey,
+  policyKey,
   previewKey,
   DEFAULT_CACHE_SIZE,
   type CachedDecision,
+  type CachedPolicy,
   type CachedPreview,
   type CacheStats,
 } from './cache.js';
@@ -52,10 +54,12 @@ import { executeGmToolRequest, type GmToolDeps } from './tool.js';
  * hash *is* the invalidation: a changed world is a changed key. Nothing cached is authoritative —
  * every call in a cached plan is re-validated against the real engine before it commits.
  *
- * **Resolve consults the GM for NPC turns.** M1 has no code brains (roadmap P1): an entity whose
- * `brain.policy` is `gm` takes its turn by the server asking the game master what it does, on the
- * real engine. Turns the GM leaves open are ended by the server, so a silent model cannot stall
- * the encounter forever.
+ * **Resolve takes NPC turns from a skill cache first (ALE-37).** An entity whose `brain.policy` is
+ * `gm` gets its turn from, in order: the exact-world decision cache; a *policy* the game master
+ * wrote earlier, run in the GM service's sandbox with no model call; or, failing both, the model.
+ * A policy proposes tool calls through the same `/gm/tool` door and can be refused like anything
+ * else, and a policy that runs but lands nothing is retired rather than trusted. Turns the GM
+ * leaves open are ended by the server, so a silent model cannot stall the encounter forever.
  */
 
 /** Phase budgets from docs/blueprint.md. Structure, not micro-optimisation: nothing may hang. */
@@ -120,8 +124,11 @@ export interface GmLoop {
    * client already greys out or highlights — so it is passed in rather than guessed at here.
    */
   speculate(intents: (Intent | null)[]): Promise<void>;
-  /** Cache hits, misses and size, for the meters and for tests. */
-  cache(): { preview: CacheStats; decisions: CacheStats };
+  /**
+   * Cache hits, misses and size, for the meters and for tests. `policies` is the skill cache
+   * (ALE-37): a hit is an NPC turn a saved policy took with no model call.
+   */
+  cache(): { preview: CacheStats; decisions: CacheStats; policies: CacheStats };
   /** This session so far: p50/p95 after GO and cost per turn (ALE-24). */
   meters(): MeterSummary;
 }
@@ -140,6 +147,24 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   const caching = cacheSize > 0;
   const previews = createTurnCache<CachedPreview>(cacheSize);
   const decisions = createTurnCache<CachedDecision>(cacheSize);
+  const policies = createTurnCache<CachedPolicy>(cacheSize);
+  /**
+   * Counted here rather than read off `policies.stats()`: a hit is an NPC turn a policy actually
+   * *took*, and a lookup that found a program which then failed its turn is a miss however the
+   * `Map` felt about it. This is the number ALE-37 is judged on.
+   */
+  let policyHits = 0;
+  let policyMisses = 0;
+  /**
+   * Policy keys this session has already asked the model about. Writing a policy is not free —
+   * the one live resolve in the ALE-37 measurement run cost 33 s against the baseline's 19 s, and
+   * the difference is the model writing a program as well as taking a turn. Paying that the first
+   * time an NPC acts buys nothing if it never acts again, and on a real ten-turn combat session
+   * `resolve` ran exactly once. So the second sighting of the same (NPC, situation) is what buys
+   * the policy: it is the earliest evidence that a third turn is coming, and the first turn costs
+   * exactly what it cost before this feature existed.
+   */
+  const seenPolicyKeys = new Set<string>();
 
   let pending: PendingPreview | null = null;
   let memory: MemoryBlocks = options.memory ?? EMPTY_MEMORY;
@@ -167,6 +192,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       text: string | null;
       snapshot: Snapshot;
       acting?: EntityId | null;
+      wantPolicy?: boolean;
     },
     budgetMs: number,
     onChunk?: (chunk: string) => void,
@@ -177,8 +203,10 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     failed: string | null;
     /** What the model charged for this call, for the meters (ALE-24). Absent from the stub. */
     usage: Record<string, number> | undefined;
+    /** A policy the game master wrote for the acting NPC this turn (ALE-37), if it wrote one. */
+    policy: CachedPolicy | null;
   }> => {
-    const nothing = { narration: '', calls: [], diffs: [], usage: undefined };
+    const nothing = { narration: '', calls: [], diffs: [], usage: undefined, policy: null };
     if (!gm) return { ...nothing, failed: 'no game master is configured' };
     try {
       const response = await gm.turn(
@@ -192,6 +220,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
           player_intent: body.intent,
           player_text: body.text,
           memory,
+          ...(body.wantPolicy ? { want_policy: true } : {}),
         },
         { signal: AbortSignal.timeout(budgetMs), ...(onChunk ? { onChunk } : {}) },
       );
@@ -205,7 +234,17 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
           calls.push({ name: entry.tool, args: entry.input ?? {} });
         }
       }
-      return { narration: response.narration, calls, diffs, failed: null, usage: response.usage };
+      const written = response.policy;
+      return {
+        narration: response.narration,
+        calls,
+        diffs,
+        failed: null,
+        usage: response.usage,
+        policy: written?.code
+          ? { code: written.code, note: written.note ?? '', turn: room.turn() }
+          : null,
+      };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       log(`gm ${phase} failed: ${reason}`);
@@ -377,6 +416,67 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   // Resolve — initiative runs, and NPC turns go through the GM
   // -------------------------------------------------------------------------------------------
 
+  /**
+   * One NPC turn from the skill cache (ALE-37). `true` when the policy took the turn.
+   *
+   * The cache holds a program, so a hit is not a lookup — it is an execution, in the GM service's
+   * sandbox, whose calls reach the world only through `/gm/tool`. Three things make that safe to
+   * put on the critical path of every combat turn:
+   *
+   * - **It cannot mutate.** A policy proposes; the engine validates, rolls its own dice and
+   *   refuses what it does not like, exactly as it does for the model's own calls.
+   * - **It cannot hang.** The sandbox kills the process group on its own timeout, and this hop
+   *   carries the resolve budget on top of it. Either way the failure is a `false` return.
+   * - **It cannot quietly go stale.** A policy that ran fine and landed nothing is a policy whose
+   *   situation moved out from under it, so it is retired here and the model is asked instead.
+   *   That is the degradation the invalidation story promises: a re-asked turn, never a
+   *   wrong-but-accepted one.
+   */
+  const runPolicy = async (
+    snapshot: Snapshot,
+    acting: EntityId,
+    startedAt: number,
+  ): Promise<boolean> => {
+    if (!caching || !gm?.policy) return false;
+    const key = policyKey(snapshot, acting);
+    const program = policies.get(key);
+    if (!program) {
+      policyMisses += 1;
+      return false;
+    }
+
+    let served = false;
+    try {
+      const response = await gm.policy(
+        {
+          session: room.id,
+          turn: room.turn(),
+          engine_token: LIVE_ENGINE_TOKEN,
+          state: stateSummary(snapshot, acting),
+          acting,
+          code: program.code,
+        },
+        { signal: AbortSignal.timeout(resolveBudget) },
+      );
+      if (!response.ok) log(`${acting}'s policy did not run: ${response.error ?? 'no reason'}`);
+      served = response.ok && response.trace.some((e) => e.ok && e.executed !== false);
+      if (response.ok && !served) log(`${acting}'s policy landed nothing; retiring it`);
+    } catch (error) {
+      log(`${acting}'s policy failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    if (!served) {
+      policies.delete(key);
+      policyMisses += 1;
+      return false;
+    }
+    policyHits += 1;
+    // No tokens: `cached` is what the meters call a phase that answered without a model call, and
+    // that is exactly what this was.
+    meter().record('resolve', { startedAt, endedAt: Date.now(), cached: true });
+    return true;
+  };
+
   const resolve = async (): Promise<void> => {
     for (let i = 0; i < maxNpcTurns; i++) {
       const snapshot = room.engine.snapshot();
@@ -396,13 +496,28 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
         if (hit) {
           for (const call of hit) if (!replayCall(call)) break;
           meter().record('resolve', { startedAt, endedAt: Date.now(), cached: true });
-        } else {
+        } else if (!(await runPolicy(snapshot, acting, startedAt))) {
+          // Neither cache could take the turn, so the model does. Whether it is also asked to
+          // write down how depends on whether this situation has come round before.
+          const skill = policyKey(snapshot, acting);
+          const wantPolicy = caching && seenPolicyKeys.has(skill);
+          seenPolicyKeys.add(skill);
           const answer = await ask(
             'resolve',
-            { engineToken: LIVE_ENGINE_TOKEN, intent: null, text: null, snapshot, acting },
+            {
+              engineToken: LIVE_ENGINE_TOKEN,
+              intent: null,
+              text: null,
+              snapshot,
+              acting,
+              wantPolicy,
+            },
             resolveBudget,
           );
           if (caching && !answer.failed) decisions.set(key, answer.calls);
+          // Keyed on the world the policy was *written for*, not the one it leaves behind: the
+          // NPC has just acted, so `room.engine.snapshot()` is already a turn out of date for it.
+          if (caching && answer.policy) policies.set(skill, answer.policy);
           meter().record('resolve', {
             startedAt,
             endedAt: Date.now(),
@@ -516,7 +631,11 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     idle: () => inFlight,
     memory: () => memory,
     speculate,
-    cache: () => ({ preview: previews.stats(), decisions: decisions.stats() }),
+    cache: () => ({
+      preview: previews.stats(),
+      decisions: decisions.stats(),
+      policies: { hits: policyHits, misses: policyMisses, size: policies.stats().size },
+    }),
     meters: () => meters.summary(),
   };
 }

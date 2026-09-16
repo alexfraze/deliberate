@@ -16,7 +16,14 @@ from .config import Settings, live_api_available
 from .contracts import ContractError, ToolContract, load_contract
 from .engine_client import HttpEngineClient
 from .llm import AnthropicLLM, LLMUnavailable
-from .models import TurnRequest, TurnResponse
+from .models import PolicyProgram, PolicyRequest, PolicyResponse, TurnRequest, TurnResponse
+from .policy import (
+    SAVE_POLICY_TOOL,
+    SAVE_POLICY_TOOL_NAME,
+    PolicyDraft,
+    make_save_policy_tool,
+    run_policy,
+)
 from .python_tool import PYTHON_TOOL, PYTHON_TOOL_NAME, make_python_tool
 from .stub_engine import StubEngine
 
@@ -45,6 +52,13 @@ def create_app(
             # through the engine as its own validated call.
             if settings.python_tool_enabled:
                 contract = contract.with_tool(PYTHON_TOOL, kind="query")
+            # `save_policy` is offered on every request, not only the ones that want a policy.
+            # The tool block is rendered ahead of the system prompt, so a tool list that varied
+            # per turn would cost the cache prefix on every turn -- far more than the tokens one
+            # unused schema costs. Whether a policy is *wanted* is said in the task line, which
+            # is volatile content and belongs in the user message anyway.
+            if settings.policy_tool_enabled:
+                contract = contract.with_tool(SAVE_POLICY_TOOL, kind="query")
             state["contract"] = contract
         contract = state["contract"]
         assert isinstance(contract, ToolContract)
@@ -91,17 +105,25 @@ def create_app(
             "tools": list(tools),
             "tool_kinds": kinds,
             "engine": settings.engine_url,
+            "policies": settings.policy_tool_enabled,
             "live_api": live_api_available(),
         }
 
     @app.post("/turn", response_model=TurnResponse)
     def turn(request: TurnRequest) -> TurnResponse:
         contract = resolve_contract()
-        local_tools = (
-            {PYTHON_TOOL_NAME: make_python_tool(timeout_seconds=settings.python_timeout_seconds)}
-            if settings.python_tool_enabled
-            else {}
-        )
+        local_tools = {}
+        if settings.python_tool_enabled:
+            local_tools[PYTHON_TOOL_NAME] = make_python_tool(
+                timeout_seconds=settings.python_timeout_seconds
+            )
+        # One draft per request. The service is stateless: a policy leaves in the response and
+        # is forgotten here, exactly like the memory blocks.
+        draft = PolicyDraft()
+        if settings.policy_tool_enabled:
+            local_tools[SAVE_POLICY_TOOL_NAME] = make_save_policy_tool(
+                draft, timeout_seconds=settings.policy_timeout_seconds
+            )
         agent = GmAgent(
             llm=resolve_llm(),
             engine=resolve_engine(),
@@ -110,9 +132,31 @@ def create_app(
             local_tools=local_tools,
         )
         try:
-            return agent.run_turn(request)
+            response = agent.run_turn(request)
         except LLMUnavailable as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if draft.code is not None:
+            response.policy = PolicyProgram(code=draft.code, note=draft.note)
+        return response
+
+    @app.post("/policy", response_model=PolicyResponse)
+    def policy(request: PolicyRequest) -> PolicyResponse:
+        """Run a saved policy for one NPC turn (ALE-37). No model, no credentials, no memory.
+
+        This route is the reason the p95 tail moves: it costs a subprocess and a few localhost
+        round trips where `/turn` costs a Claude call. It is also why there is no 503 here --
+        a machine with no key can still take an NPC's turn, as long as somebody wrote the
+        policy on a machine that had one.
+        """
+        if not settings.policy_tool_enabled:
+            raise HTTPException(
+                status_code=503, detail="NPC policies are disabled (GM_POLICY_TOOL=0)."
+            )
+        return run_policy(
+            request,
+            engine=resolve_engine(),
+            timeout_seconds=settings.policy_timeout_seconds,
+        )
 
     return app
 

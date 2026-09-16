@@ -64,6 +64,18 @@ class MemoryBlocks(BaseModel):
     player_profile: list[str] = Field(default_factory=list)
 
 
+class PolicyProgram(BaseModel):
+    """A policy the game master wrote: a Python program that takes one NPC's turn.
+
+    It is source, not behaviour. Nothing happens because a program exists; something happens
+    when `POST /policy` runs it and the engine accepts one of the calls it proposes.
+    """
+
+    code: str
+    #: One line from the game master on what the policy does. Trace and logs only.
+    note: str = ""
+
+
 class TurnRequest(BaseModel):
     session: str
     turn: int
@@ -81,6 +93,11 @@ class TurnRequest(BaseModel):
     player_text: str | None = None
     memory: MemoryBlocks = Field(default_factory=MemoryBlocks)
     max_tool_steps: int | None = None
+    #: Ask for a reusable NPC policy this turn (ALE-37). The `save_policy` tool is offered on
+    #: every request either way -- a tool list that varied per turn would cost the cache prefix --
+    #: so this changes the task line, not the payload. Writing a policy costs real output tokens
+    #: and real seconds, so Node only asks when it has seen this NPC in this situation before.
+    want_policy: bool = False
 
 
 class GmToolCall(BaseModel):
@@ -144,3 +161,44 @@ class TurnResponse(BaseModel):
     #: non-empty list belongs in the recording, because it means a turn tried to disclose
     #: the prompt or carry it to the player through an NPC's mouth.
     redactions: list[str] = Field(default_factory=list)
+    #: A reusable NPC policy the game master wrote this turn, if it wrote one and the dry run
+    #: accepted it (ALE-37). `None` is the normal case outside `resolve`. Node decides what to
+    #: key it on and when to throw it away; this service keeps nothing.
+    policy: PolicyProgram | None = None
+
+
+# -- NPC code brains (ALE-37) ----------------------------------------------------------------
+
+
+class PolicyRequest(BaseModel):
+    """Node -> Python. Run this policy for this NPC's turn. No model is called.
+
+    The same `state`/`engine_token` discipline as `/turn`: the state summary is what the engine
+    already computed, and the token names the engine the calls act on. The service still holds no
+    world state -- it does not even remember the policy between requests.
+    """
+
+    session: str
+    turn: int
+    engine_token: str | None = None
+    state: dict[str, Any] = Field(default_factory=dict)
+    #: The entity the policy is taking a turn for. Also `state["acting"]`; sent explicitly so a
+    #: caller cannot depend on the summary's shape for the one field that decides who acts.
+    acting: str
+    code: str
+
+
+class PolicyResponse(BaseModel):
+    """Python -> Node. What the policy did, in the shape a `/turn` trace has.
+
+    `ok: False` means the program itself failed -- it raised, or it was killed for running too
+    long. It never means the engine refused something: a refusal is an ordinary verdict on an
+    ordinary trace line, and a policy is expected to read it and carry on.
+    """
+
+    session: str
+    turn: int
+    ok: bool
+    error: str | None = None
+    trace: list[ToolCallRecord] = Field(default_factory=list)
+    stdout: str = ""

@@ -69,6 +69,47 @@ def test_the_real_tool_payload_is_accepted() -> None:
     assert result.stop_reason == "tool_use"
 
 
+def test_the_runtime_tool_payload_is_accepted() -> None:
+    """The payload the model actually sees at run time: the 15 contract tools plus this
+    service's own two, `python` and `save_policy` (ALE-37).
+
+    The test above sends the contract alone, which is the `strict` regression. This one sends
+    what `resolve_contract()` builds, because that is the request a real turn makes -- and
+    "Schema is too complex." was a failure of the tool set as a whole, not of any one schema.
+    Adding a seventeenth tool is exactly the change that could bring it back, and only a real
+    call can say.
+    """
+    from deliberate_gm.policy import SAVE_POLICY_TOOL
+    from deliberate_gm.python_tool import PYTHON_TOOL
+
+    contract = (
+        load_contract(REAL_CONTRACT)
+        .with_tool(PYTHON_TOOL, kind="query")
+        .with_tool(SAVE_POLICY_TOOL, kind="query")
+    )
+    assert len(contract.tools) == 17
+    assert "save_policy" in contract.names()
+
+    result = AnthropicLLM(Settings()).create(
+        LLMRequest(
+            system=system_blocks(),
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "# Turn 3 — resolve\n\nInitiative is running and it is npc:gorm's "
+                        "turn. Read the world state before you do anything."
+                    ),
+                }
+            ],
+            tools=list(contract.tools),
+            stream=True,
+        )
+    )
+    assert result.tool_uses(), f"no tool_use in {result.stop_reason}: {result.content}"
+    assert result.stop_reason == "tool_use"
+
+
 def test_the_model_settings_are_accepted() -> None:
     """Adaptive thinking, effort inside `output_config`, no `budget_tokens`, no prefill --
     each of those is a 400 if it is wrong, and only a real call can say."""

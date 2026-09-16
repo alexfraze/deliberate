@@ -96,7 +96,9 @@ These shapes are code in `packages/protocol/src/index.ts`.
   serving Qwen3.8-Flash-Next NVFP4 with MTP (the Kaggle-proven profile).
 - **Sandbox:** the ARC-AGI-3 Python sandbox (RPC with refreshed globals, hard timeouts, restricted
   builtins).
-- **NPC brains (roadmap):** model-written Python policies per NPC, cached, executed by the engine.
+- **NPC brains (ALE-37):** model-written Python policies per NPC, cached by situation, run in the
+  sandbox each turn. They propose tool calls through the same validated door; the engine still
+  decides. See `docs/gm-service.md`, "NPC code brains".
 - **Assets:** Blender 4.x headless `bpy`, glTF export, Flux/SD for textures and portraits, stylized
   low-poly art direction.
 - **Cinematics (optional):** Hunyuan-GameCraft or an image model, async, cached, behind the
