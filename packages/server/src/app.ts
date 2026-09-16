@@ -22,7 +22,7 @@ import {
 import { parseClientFrame, toText } from './frames.js';
 import { createEngineRegistry } from './gm/engines.js';
 import { createGmLoop, type GmLoop } from './gm/loop.js';
-import type { GmService } from './gm/service.js';
+import type { GmHealth, GmService } from './gm/service.js';
 import { executeGmToolRequest, parseGmToolRequest } from './gm/tool.js';
 import { recordSession, type Recording } from './recording.js';
 import { createRoom, type Room } from './room.js';
@@ -156,10 +156,13 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   const recording = opts.recordings
     ? recordSession(room, { dir: opts.recordings, seed, templates: scene.templates })
     : null;
+  // Null means no model anywhere in the loop: preview is the engine's own resolution and GO
+  // commits it. That is a legitimate mode, but it has to be *visible* (ALE-39) — see `/healthz`.
+  const gmService = opts.gm ?? null;
   const gm = createGmLoop({
     room,
     registry,
-    gm: opts.gm ?? null,
+    gm: gmService,
     ...(loaded ? { memory: loaded.memory } : {}),
     ...(opts.budgets?.preview ? { previewBudgetMs: opts.budgets.preview } : {}),
     ...(opts.budgets?.resolve ? { resolveBudgetMs: opts.budgets.resolve } : {}),
@@ -187,6 +190,33 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     });
   }
 
+  /**
+   * Whether a game master is actually behind this server, for the client to put on screen. The
+   * default UI path never calls the model, and a silent engine-only turn is indistinguishable
+   * from a game master that answered instantly — so the answer has to be askable (ALE-39).
+   */
+  const gmStatus = async (): Promise<{
+    configured: boolean;
+    reachable: boolean;
+    model: string | null;
+    narrateModel: string | null;
+  }> => {
+    if (!gmService) {
+      return { configured: false, reachable: false, model: null, narrateModel: null };
+    }
+    // An injected service with no probe (the scripted stub, ALE-17's fakes) is taken at its word.
+    if (!gmService.health) {
+      return { configured: true, reachable: true, model: null, narrateModel: null };
+    }
+    const health: GmHealth | null = await gmService.health();
+    return {
+      configured: true,
+      reachable: health !== null,
+      model: health?.model ?? null,
+      narrateModel: health?.narrateModel ?? null,
+    };
+  };
+
   app.get('/healthz', async () => ({
     ok: true,
     engine: ENGINE_VERSION,
@@ -203,6 +233,8 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     meters: gm.meters(),
     // Where `POST /save` writes (ALE-23). Null when saving is off.
     save: slot?.path ?? null,
+    // Is there a model in this loop at all, and which one (ALE-39).
+    gm: await gmStatus(),
   }));
 
   /**

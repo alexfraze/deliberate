@@ -23,7 +23,14 @@ import { createDeliberatePanel } from './panel.js';
 import { createRenderer } from './renderer.js';
 import { createGameScene } from './scene.js';
 import { resolvePick } from './selection.js';
-import { connectFixture, connectWebSocket, useFixtureMode, type Transport } from './transport.js';
+import { NO_GM } from './deliberate.js';
+import {
+  connectFixture,
+  connectWebSocket,
+  fetchGmHealth,
+  useFixtureMode,
+  type Transport,
+} from './transport.js';
 import { applyDiffToView, emptyView, viewFromSnapshot, type ViewState } from './view.js';
 
 const app = document.getElementById('app') ?? document.body;
@@ -42,13 +49,18 @@ const floats = new Map<Animation, FloatingNumber>();
 let view: ViewState = emptyView();
 
 /**
- * The preview-then-GO panel (ALE-32). Off by default: with it off a click commits immediately,
- * which is the M0 path the acceptance suite plays. With it on, a click stages an action, the
- * server previews it against a clone of the engine, and nothing happens until GO.
+ * The preview-then-GO panel (ALE-32). **On by default** since ALE-39: with it off a click commits
+ * straight to the engine and no model is ever asked, which is the M0 path and was silently the
+ * out-of-the-box experience. With it on, a click stages an action, the server previews it against
+ * a clone of the engine, and nothing happens until GO. Either way the panel now says which.
  */
 const panel = createDeliberatePanel(panelElement, {
   nameOf: (id) => view.entities[id]?.name ?? id,
 });
+
+const fixtureMode = useFixtureMode(location.search, location.hash);
+// Whether a game master is behind this session at all (ALE-39). Fixture mode has no server to ask.
+void (fixtureMode ? Promise.resolve(NO_GM) : fetchGmHealth()).then((gm) => panel.setGm(gm));
 
 let selected: EntityId | null = null;
 let turn = 0;
@@ -83,6 +95,12 @@ function describeSelection(id: EntityId | null): string | null {
   const entity = view.entities[id];
   if (!entity) return id;
   return `${entity.name} (${entity.faction}) · ${entity.hp}/${entity.maxHp} hp · (${entity.tile.x}, ${entity.tile.y})`;
+}
+
+/** The HUD's turn line and the panel's encounter note come from the same fact: is initiative on. */
+function refreshTurn(): void {
+  hud.setTurn(describeTurn());
+  panel.setEncounter(view.initiative !== null);
 }
 
 function setSelected(id: EntityId | null): void {
@@ -120,7 +138,7 @@ function onMessage(message: ServerMessage): void {
       scene.syncEntities(view);
       resize();
       setSelected(selected !== null && view.entities[selected] ? selected : null);
-      hud.setTurn(describeTurn());
+      refreshTurn();
       hud.setHint(`joined · ${Object.keys(view.entities).length} entities on ${view.mapId}`);
       return;
     }
@@ -155,7 +173,7 @@ function onMessage(message: ServerMessage): void {
   }
 }
 
-const transport: Transport = useFixtureMode(location.search, location.hash)
+const transport: Transport = fixtureMode
   ? connectFixture({ onMessage, onStatus: (status) => hud.setStatus(`fixture (${status})`) })
   : connectWebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`, {
       onMessage,
@@ -188,7 +206,7 @@ function onAnimationEvent(event: QueueEvent): void {
   if (event.type === 'finish') {
     applyDiffToView(view, animation.diff);
     scene.syncEntities(view);
-    hud.setTurn(describeTurn());
+    refreshTurn();
     if (selected !== null) hud.setSelection(describeSelection(selected));
   }
 }
@@ -308,7 +326,10 @@ renderer.domElement.addEventListener('pointerup', (event) => {
         ...(text ? { text } : {}),
       });
     } else {
+      // No preview, no model: straight to the engine. The panel says so rather than leaving the
+      // player to assume the instant result came from a game master (ALE-39).
       transport.send({ type: 'intent', room: DEFAULT_ROOM, turn, intent: result.intent });
+      panel.noteTurn('engine');
       panel.busy('resolving the turn', 15000);
     }
   }
@@ -372,6 +393,7 @@ panel.onEndTurn(() => {
     });
   } else {
     transport.send({ type: 'intent', room: DEFAULT_ROOM, turn, intent });
+    panel.noteTurn('engine');
     panel.busy('resolving the turn', 15000);
   }
 });

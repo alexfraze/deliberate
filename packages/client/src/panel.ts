@@ -12,7 +12,16 @@
  */
 import type { Diff, EntityId, Intent } from '@deliberate/protocol';
 
-import { describeStaged, telegraph } from './deliberate.js';
+import {
+  describeEncounter,
+  describeGm,
+  describeMode,
+  describeStaged,
+  describeTurnSource,
+  telegraph,
+  type GmAvailability,
+  type TurnSource,
+} from './deliberate.js';
 
 export interface DeliberatePanel {
   /** Whether clicks should preview instead of committing. */
@@ -50,6 +59,19 @@ export interface DeliberatePanel {
    * allows `intent: null` precisely for this: talk to an NPC, ask what the world does.
    */
   onSpeak(handler: () => void): void;
+  /**
+   * What the server said about the game master behind it (ALE-39). Until this arrives the panel
+   * says it is still asking rather than guessing, because "no game master" and "not yet known"
+   * are different claims and only one of them is safe to make.
+   */
+  setGm(gm: GmAvailability | null): void;
+  /**
+   * Whether an encounter is running. Outside one there is no initiative, so End turn has nothing
+   * to end and no NPC ever acts — which the panel now says out loud.
+   */
+  setEncounter(active: boolean): void;
+  /** Record what was consulted for the turn just taken, for the provenance line. */
+  noteTurn(source: TurnSource): void;
 }
 
 export interface PanelOptions {
@@ -80,6 +102,14 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   say.type = 'button';
   say.textContent = 'Say / Ask';
 
+  // The three lines ALE-39 exists for. They are outside the `dl-open` gate on purpose: the whole
+  // failure was that with deliberate mode OFF the panel said nothing at all, so the player could
+  // not tell an engine-only turn from a game master that answered instantly.
+  const mode = element('div', 'dl-mode');
+  const availability = element('div', 'dl-gm');
+  const provenance = element('div', 'dl-source');
+  const encounter = element('div', 'dl-encounter');
+
   const staged = element('div', 'dl-staged');
   const busy = element('div', 'dl-busy');
   const prose = element('div', 'dl-preview');
@@ -100,7 +130,43 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   endTurn.type = 'button';
   endTurn.textContent = 'End turn';
 
-  root.append(label, speech, say, staged, busy, prose, reactions, go, endTurn, narration);
+  root.append(
+    label,
+    mode,
+    availability,
+    speech,
+    say,
+    staged,
+    busy,
+    prose,
+    reactions,
+    go,
+    endTurn,
+    encounter,
+    provenance,
+    narration,
+  );
+
+  // What the panel knows about who is running the turn. None of it is authoritative — it is a
+  // report of what the client asked for and what came back.
+  let gm: GmAvailability | null = null;
+  let source: TurnSource = 'none';
+  let inEncounter = false;
+
+  const paintStatus = (): void => {
+    mode.textContent = describeMode(toggle.checked, gm);
+    availability.textContent = describeGm(gm);
+    provenance.textContent = describeTurnSource(source, gm);
+    encounter.textContent = describeEncounter(inEncounter);
+    // Styling hooks, so "no model ran" reads as a warning rather than as more grey text.
+    root.classList.toggle('dl-nogm', gm !== null && !(gm.configured && gm.reachable));
+    root.classList.toggle('dl-engine-only', !toggle.checked || source === 'engine');
+  };
+
+  const noteTurn = (next: TurnSource): void => {
+    source = next;
+    paintStatus();
+  };
 
   // The waiting indicator. One interval drives both the spinner and the clock; it is cleared on
   // every exit path so a finished turn can never leave a phantom "still working" on screen.
@@ -174,8 +240,13 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     } else {
       staged.textContent = describeStaged(null, options.nameOf);
     }
+    paintStatus();
   };
-  show(false);
+  // ON by default (ALE-39). The game master is the premise of the project, and the old default sent
+  // every click straight to the engine — so the out-of-the-box experience never called the model
+  // once. Turning it off is now the deliberate choice, and the mode line says what that means.
+  toggle.checked = true;
+  show(toggle.checked);
 
   return {
     isOn: () => toggle.checked,
@@ -192,11 +263,13 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
       prose.textContent = text;
       setReactions(telegraph(diffs, options.nameOf));
       go.disabled = false;
+      noteTurn('previewed');
     },
     committing() {
       prose.textContent = '';
       startBusy('resolving the turn');
       go.disabled = true;
+      noteTurn('committed');
     },
     reset(note) {
       stopBusy();
@@ -222,6 +295,15 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
         handler(toggle.checked);
       });
     },
+    setGm(next) {
+      gm = next;
+      paintStatus();
+    },
+    setEncounter(active) {
+      inEncounter = active;
+      paintStatus();
+    },
+    noteTurn,
     busy(label, timeoutMs) {
       startBusy(label, timeoutMs);
     },
