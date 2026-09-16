@@ -106,14 +106,18 @@ function harness(options: HarnessOptions) {
   return { engine, room, loop, socket, asked, ran, go, resolves };
 }
 
-/** What the game master says on a resolve miss: it acts, and it writes down how. */
+/**
+ * What the game master says on a resolve miss: it acts, and — only when the loop asked it to —
+ * it writes down how. Honouring `want_policy` is what makes this a fair stand-in: a real model
+ * writes a program only when the task line asks for one, and the whole point of asking late is
+ * that the first sighting of an NPC costs exactly what it cost before ALE-37.
+ */
 const writesAPolicy = (request: GmTurnRequest): ScriptedTurn => {
   if (request.phase !== 'resolve') return {};
   const acting = String((request.state as { acting?: string }).acting ?? '');
-  return {
-    calls: [{ tool: 'say', input: { npc_id: acting, text: 'Hold the line.', to: null } }],
-    policy: { code: `hold:${acting}`, note: 'hold position and talk' },
-  };
+  const calls = [{ tool: 'say', input: { npc_id: acting, text: 'Hold the line.', to: null } }];
+  if (!request.want_policy) return { calls };
+  return { calls, policy: { code: `hold:${acting}`, note: 'hold position and talk' } };
 };
 
 /** A policy that says a line and ends its own turn — the shape a real generated policy has. */
@@ -128,21 +132,45 @@ const holds: PolicyScript = (code, acting) =>
     : { failed: `no policy called ${code}` };
 
 describe('the skill cache', () => {
-  it('takes an NPC later turns from its policy, without asking the model again', async () => {
-    const h = harness({ script: writesAPolicy, policyScript: holds, maxNpcTurns: 4 });
+  it('takes an NPC third turn from its policy, without asking the model again', async () => {
+    const h = harness({ script: writesAPolicy, policyScript: holds, maxNpcTurns: 6 });
     await h.go();
 
-    // Four NPC turns: guard, merchant, guard, merchant. The first turn of each cost a model call
-    // and bought a policy; the second of each was taken by that policy. Before ALE-37 this was
-    // four model calls, in sequence, in the after-GO window.
-    expect(h.resolves()).toBe(2);
+    // Six NPC turns: guard, merchant, guard, merchant, guard, merchant.
+    //
+    //   1st sighting  — the model acts. Nothing is asked for beyond that: an NPC that never comes
+    //                   round again would have been charged for a program nobody runs.
+    //   2nd sighting  — the model acts *and* writes the policy, now that a third turn is likely.
+    //   3rd sighting  — the policy takes the turn. No model call at all.
+    //
+    // So four model calls where M1 had six, and every further turn of this encounter is free.
+    expect(h.resolves()).toBe(4);
     expect(h.ran).toEqual([`${GUARD_ID}:hold:${GUARD_ID}`, `${MERCHANT_ID}:hold:${MERCHANT_ID}`]);
-    expect(h.loop.cache().policies).toMatchObject({ hits: 2, misses: 2, size: 2 });
+    expect(h.loop.cache().policies).toMatchObject({ hits: 2, misses: 4, size: 2 });
 
     // And the policy turns were not free of consequence: the engine saw them, because every call
     // a policy makes goes through the same validated door the model's calls go through.
     const hash = h.engine.hash();
     expect(hash).not.toBe(createEngine(brawling(), { seed: GATEHOUSE_SEED }).hash());
+  });
+
+  it('does not ask for a policy the first time an NPC acts', async () => {
+    // The measured reason this gate exists: on a real ten-turn combat session `resolve` ran once,
+    // and a policy bought there is a policy nobody ever runs. Writing one cost 33 s against the
+    // baseline's 19 s, so asking on the first sighting is a pure regression.
+    const asks: (boolean | undefined)[] = [];
+    const h = harness({
+      script: (request) => {
+        if (request.phase === 'resolve') asks.push(request.want_policy);
+        return writesAPolicy(request);
+      },
+      policyScript: holds,
+      maxNpcTurns: 4,
+    });
+    await h.go();
+    // Guard, merchant, guard, merchant: neither NPC is asked on its first turn, both on the second.
+    expect(asks).toEqual([undefined, undefined, true, true]);
+    expect(h.ran).toEqual([]);
   });
 
   it('retires a policy the engine refuses everything from, and asks the model instead', async () => {
@@ -154,15 +182,15 @@ describe('the skill cache', () => {
       policyScript: () => ({
         calls: [{ tool: 'say', input: { npc_id: 'nobody-at-all', text: 'Hm.', to: null } }],
       }),
-      maxNpcTurns: 4,
+      maxNpcTurns: 6,
     });
     await h.go();
 
     expect(h.ran).toHaveLength(2);
-    // Every one of the four NPC turns reached the model: two misses, and two turns where the
-    // policy was tried, failed to land anything, and was retired in favour of asking.
-    expect(h.resolves()).toBe(4);
-    expect(h.loop.cache().policies).toMatchObject({ hits: 0, misses: 4 });
+    // Every one of the six NPC turns reached the model: four the cache could not serve, and two
+    // where a policy was tried, failed to land anything, and was retired in favour of asking.
+    expect(h.resolves()).toBe(6);
+    expect(h.loop.cache().policies).toMatchObject({ hits: 0, misses: 6 });
   });
 
   it('retires a policy whose program crashed or timed out', async () => {
@@ -170,20 +198,20 @@ describe('the skill cache', () => {
       script: writesAPolicy,
       // What the sandbox returns for a snippet that raised, or that it killed for running long.
       policyScript: () => ({ failed: 'The python tool timed out after 2s.' }),
-      maxNpcTurns: 4,
+      maxNpcTurns: 6,
     });
     await h.go();
 
-    expect(h.resolves()).toBe(4);
-    expect(h.loop.cache().policies).toMatchObject({ hits: 0, misses: 4 });
+    expect(h.resolves()).toBe(6);
+    expect(h.loop.cache().policies).toMatchObject({ hits: 0, misses: 6 });
   });
 
   it('falls back to the model when the policy service cannot be reached at all', async () => {
     // No `policyScript` at all: every run comes back `ok: false`. A GM service that is down, or
     // an older one with no `/policy` route, degrades to M1 behaviour — slow, and correct.
-    const h = harness({ script: writesAPolicy, maxNpcTurns: 4 });
+    const h = harness({ script: writesAPolicy, maxNpcTurns: 6 });
     await h.go();
-    expect(h.resolves()).toBe(4);
+    expect(h.resolves()).toBe(6);
   });
 
   it('does not cache a policy when caching is off', async () => {
@@ -200,7 +228,7 @@ describe('the skill cache', () => {
       policyScript: holds,
       call: (request) => executeGmToolRequest(deps, request),
     });
-    const loop = createGmLoop({ room, registry, gm, maxNpcTurns: 4, cacheSize: 0 });
+    const loop = createGmLoop({ room, registry, gm, maxNpcTurns: 6, cacheSize: 0 });
     room.setGmFrames((socket, message) => loop.handle(socket, message));
     const socket = fakeSocket();
     room.handle(socket, { type: 'join', room: DEFAULT_ROOM, protocol: 1 });
@@ -209,7 +237,7 @@ describe('the skill cache', () => {
     room.handle(socket, { type: 'go', room: DEFAULT_ROOM, turn: 0 });
     await loop.idle();
 
-    expect(asked.filter((r) => r.phase === 'resolve')).toHaveLength(4);
+    expect(asked.filter((r) => r.phase === 'resolve')).toHaveLength(6);
     expect(loop.cache().policies).toMatchObject({ hits: 0, misses: 0, size: 0 });
   });
 });

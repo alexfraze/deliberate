@@ -44,7 +44,13 @@ DEFAULT_NARRATE_MODEL = "claude-sonnet-5"
 #: is worse than the table says (27-30 s against 23.5 s). The p95 and the price are not properties
 #: of the effort setting at all, they are properties of the *session*: the combat run's tail is
 #: 2.6x the dialogue run's, because a turn where several NPCs each cost a model call is several
-#: model calls. That is ALE-37 (NPC code brains), not effort tuning.
+#: model calls.
+#:
+#: That last sentence was blamed on ALE-37 (NPC code brains) and the blame was misplaced. ALE-37
+#: measured it: across ten live combat turns the service saw **one** `resolve` call. The NPC turns
+#: are taken inside the *preview* call, on the clone, and GO re-validates them in 2-6 ms -- so the
+#: several model calls are billed to preview, where `yard-brawl` p50 is 21-30 s, and after-GO is
+#: comparatively cheap. See `docs/gm-service.md`, "What the measurement actually showed".
 #:
 #: `pnpm meters recordings/bank/<name>.jsonl` re-prints both rows with no key and no network.
 DEFAULT_EFFORT = "medium"

@@ -16,20 +16,29 @@ PHASE_TASK = {
     ),
     "resolve": (
         "Initiative is running. Act for the entity named by `acting`, one validated call at a "
-        "time, and narrate what the engine's verdicts say happened.\n"
-        "\n"
-        "Then save a policy for that NPC with `save_policy`, so the server can take its later "
-        "turns without asking you (ALE-37). You are being asked because there is no usable "
-        "policy for this NPC in this situation -- either it has never had one, the situation "
-        "has changed under it, or the one it had stopped working. Write the strategy you just "
-        "used, generally enough that it still reads correctly two turns from now when everyone "
-        "has moved."
+        "time, and narrate what the engine's verdicts say happened."
     ),
     "narrate": (
         "The engine has already resolved this turn. Narrate what its diffs say happened. "
         "Make no mutation calls."
     ),
 }
+
+#: Appended to the resolve task only when `TurnRequest.want_policy` is set (ALE-37).
+#:
+#: It is a separate string, and asked for separately, because writing a policy is not free: the
+#: one live resolve in the ALE-37 measurement run took 33 s against the baseline's 19 s, and the
+#: difference is the model writing a program as well as taking a turn. Paying that on the *first*
+#: time an NPC acts buys nothing if it never acts again -- so Node asks only once it has seen
+#: this NPC in this situation before, which is the earliest evidence that a third turn is coming.
+POLICY_TASK = (
+    "\n\nThis NPC has now come round in this situation more than once, so write down how it "
+    "fights it: call `save_policy` with a Python program that takes this NPC's turn from "
+    "`state`, and the server will run that instead of asking you again. Write the strategy, "
+    "not this turn's move -- it re-runs from scratch every turn, against whatever the world "
+    "looks like then, so read positions, hit points and who is alive out of `state` rather "
+    "than assuming any of them."
+)
 
 
 def build_user_message(request: TurnRequest, *, memory_text: str = "") -> dict[str, Any]:
@@ -52,7 +61,10 @@ def build_user_message(request: TurnRequest, *, memory_text: str = "") -> dict[s
     if speech:
         sections.append(speech)
 
-    sections.append("## Your task\n" + PHASE_TASK.get(request.phase, PHASE_TASK["preview"]))
+    task = PHASE_TASK.get(request.phase, PHASE_TASK["preview"])
+    if request.want_policy and request.phase == "resolve":
+        task += POLICY_TASK
+    sections.append("## Your task\n" + task)
 
     return {"role": "user", "content": "\n\n".join(sections)}
 

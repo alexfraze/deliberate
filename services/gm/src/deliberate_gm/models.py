@@ -93,6 +93,11 @@ class TurnRequest(BaseModel):
     player_text: str | None = None
     memory: MemoryBlocks = Field(default_factory=MemoryBlocks)
     max_tool_steps: int | None = None
+    #: Ask for a reusable NPC policy this turn (ALE-37). The `save_policy` tool is offered on
+    #: every request either way -- a tool list that varied per turn would cost the cache prefix --
+    #: so this changes the task line, not the payload. Writing a policy costs real output tokens
+    #: and real seconds, so Node only asks when it has seen this NPC in this situation before.
+    want_policy: bool = False
 
 
 class GmToolCall(BaseModel):

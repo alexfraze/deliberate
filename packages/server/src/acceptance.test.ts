@@ -601,7 +601,7 @@ describe.skipIf(!live)(`${SCRIPT}: a ten-turn playthrough against the live model
     const gm: GmService = {
       // Policies (ALE-37) pass straight through: the run is judged on what reached the engine,
       // and a policy reaches it through the same door with the same verdicts.
-      policy: (request, options) => inner.policy(request, options),
+      ...(inner.policy ? { policy: inner.policy.bind(inner) } : {}),
       async turn(request, options): Promise<GmTurnResponse> {
         const response = await inner.turn(request, options);
         usage.push({ phase: request.phase, usage: response.usage ?? {} });

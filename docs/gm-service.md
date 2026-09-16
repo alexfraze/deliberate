@@ -170,6 +170,57 @@ resolve, one NPC turn:
   3. the model       POST /turn                                                    ~4 s
 ```
 
+### What the measurement actually showed
+
+**Read this before extending it.** One ten-turn live `yard-brawl` playthrough was run with the
+whole thing wired up (`recordings/live/yard-brawl-policies.jsonl`, ~$1.83, committed). The skill
+cache served **zero** NPC turns, and the reason is worth more than the feature:
+
+|                               | baseline `yard-brawl` | with the skill cache |
+| ----------------------------- | --------------------- | -------------------- |
+| after GO p50                  | 8.0 s                 | 4.1 s                |
+| after GO p95                  | 27.6 s                | 36.3 s               |
+| preview p50                   | 30.3 s                | 21.5 s               |
+| $ / turn                      | $0.2086               | $0.1828              |
+| `resolve` phases in ten turns | **2**                 | **1**                |
+| `POST /policy` calls          | —                     | **0**                |
+
+The p50 improvement is not this feature: it is ALE-38 moving narration to Sonnet. The p95
+_regression_ is: the one resolve that ran cost 33 s against the baseline's 19 s, because the model
+wrote a program as well as taking a turn.
+
+**`resolve()` is not where NPC turns happen in live play.** The game master takes them during
+`preview`, on the clone, because initiative is running and the preview's job is to show what the
+world does back; GO then re-validates those calls against the real engine in 2–6 ms (`validate`).
+By the time `resolve()` looks, `gmActor` is usually already `null`. Across ten combat turns the
+Python service saw 21 `/turn` calls: ten previews, ten narrations, and **one** resolve.
+
+So the roadmap's premise — "every NPC turn is one sequential Claude call" in the after-GO window —
+was true of M1 and stopped being true when ALE-32 put preview on a clone and ALE-22 memoised it.
+The NPC turns are still one sequential Claude call each; they are just billed to `preview`.
+
+Two things follow, and both are in the tree:
+
+1. **The policy is asked for late.** Node asks the model to write one only on the _second_ time it
+   sees the same `(NPC, situation)` — the earliest evidence a third turn is coming. A session like
+   the one above therefore costs exactly what it cost before this feature existed, and the 33 s
+   turn does not happen. `want_policy` on `TurnRequest` is that signal.
+2. **The remaining work is on the preview path, not this one.** Making NPC turns cheap in live
+   play means not resolving them inside the preview call — which is `speculate`/`computePreview`
+   territory, not `resolve()`'s. The machinery that makes a cheap NPC turn possible is here and
+   measured; what is missing is a caller that needs it every turn.
+
+What _is_ proven, end to end against the live model and the real engine:
+
+|                                                             |                               |
+| ----------------------------------------------------------- | ----------------------------- |
+| one NPC turn from the model (`POST /turn`, resolve)         | **33.0 s**                    |
+| the same NPC turn from the policy it wrote (`POST /policy`) | **33 ms** p50 (n=6, 31–44 ms) |
+
+That is the sandbox subprocess, the localhost hop and every `/gm/tool` round trip included, running
+a program `claude-opus-5` actually wrote against a real mid-brawl state summary. The engine refused
+one of its calls with a player-readable reason on the way, which is the design working.
+
 ### Generation: `save_policy`
 
 A service-owned local **query** tool, like `python` and for the same reason — the contract

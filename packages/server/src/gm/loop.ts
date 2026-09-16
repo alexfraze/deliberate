@@ -155,6 +155,16 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
    */
   let policyHits = 0;
   let policyMisses = 0;
+  /**
+   * Policy keys this session has already asked the model about. Writing a policy is not free —
+   * the one live resolve in the ALE-37 measurement run cost 33 s against the baseline's 19 s, and
+   * the difference is the model writing a program as well as taking a turn. Paying that the first
+   * time an NPC acts buys nothing if it never acts again, and on a real ten-turn combat session
+   * `resolve` ran exactly once. So the second sighting of the same (NPC, situation) is what buys
+   * the policy: it is the earliest evidence that a third turn is coming, and the first turn costs
+   * exactly what it cost before this feature existed.
+   */
+  const seenPolicyKeys = new Set<string>();
 
   let pending: PendingPreview | null = null;
   let memory: MemoryBlocks = options.memory ?? EMPTY_MEMORY;
@@ -182,6 +192,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       text: string | null;
       snapshot: Snapshot;
       acting?: EntityId | null;
+      wantPolicy?: boolean;
     },
     budgetMs: number,
     onChunk?: (chunk: string) => void,
@@ -209,6 +220,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
           player_intent: body.intent,
           player_text: body.text,
           memory,
+          ...(body.wantPolicy ? { want_policy: true } : {}),
         },
         { signal: AbortSignal.timeout(budgetMs), ...(onChunk ? { onChunk } : {}) },
       );
@@ -425,7 +437,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     acting: EntityId,
     startedAt: number,
   ): Promise<boolean> => {
-    if (!caching || !gm) return false;
+    if (!caching || !gm?.policy) return false;
     const key = policyKey(snapshot, acting);
     const program = policies.get(key);
     if (!program) {
@@ -485,18 +497,27 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
           for (const call of hit) if (!replayCall(call)) break;
           meter().record('resolve', { startedAt, endedAt: Date.now(), cached: true });
         } else if (!(await runPolicy(snapshot, acting, startedAt))) {
-          // Neither cache could take the turn, so the model does — and is asked, in the same
-          // breath, to write down the policy it used. The miss costs exactly what a miss cost
-          // before ALE-37; what changes is that the next turn need not be one.
+          // Neither cache could take the turn, so the model does. Whether it is also asked to
+          // write down how depends on whether this situation has come round before.
+          const skill = policyKey(snapshot, acting);
+          const wantPolicy = caching && seenPolicyKeys.has(skill);
+          seenPolicyKeys.add(skill);
           const answer = await ask(
             'resolve',
-            { engineToken: LIVE_ENGINE_TOKEN, intent: null, text: null, snapshot, acting },
+            {
+              engineToken: LIVE_ENGINE_TOKEN,
+              intent: null,
+              text: null,
+              snapshot,
+              acting,
+              wantPolicy,
+            },
             resolveBudget,
           );
           if (caching && !answer.failed) decisions.set(key, answer.calls);
           // Keyed on the world the policy was *written for*, not the one it leaves behind: the
           // NPC has just acted, so `room.engine.snapshot()` is already a turn out of date for it.
-          if (caching && answer.policy) policies.set(policyKey(snapshot, acting), answer.policy);
+          if (caching && answer.policy) policies.set(skill, answer.policy);
           meter().record('resolve', {
             startedAt,
             endedAt: Date.now(),

@@ -37,6 +37,12 @@ export interface GmTurnRequest {
   player_text: string | null;
   memory: MemoryBlocks;
   max_tool_steps?: number;
+  /**
+   * Ask the game master to write a reusable NPC policy this turn (ALE-37). Costs real output
+   * tokens and real seconds, so the loop only sets it once an NPC has come round in the same
+   * situation twice — see `loop.ts`.
+   */
+  want_policy?: boolean;
 }
 
 /** One entry of the GM's trace. Field names are the service's (`docs/gm-service.md`). */
@@ -126,8 +132,13 @@ export interface GmService {
   /**
    * Runs a policy the game master wrote earlier (ALE-37). The expensive half of an NPC turn was a
    * Claude call; this is a sandboxed subprocess and a few localhost round trips instead.
+   *
+   * Optional, like `health`, and for a reason with teeth as well as convenience: a game master
+   * that cannot run policies — an older service with no `/policy` route, or a scripted fake — is
+   * a game master the loop falls back to asking, which is M1 behaviour and correct. Saying that
+   * in the type means the fallback is checked by the compiler rather than only by a test.
    */
-  policy(request: GmPolicyRequest, options?: GmTurnOptions): Promise<GmPolicyResponse>;
+  policy?(request: GmPolicyRequest, options?: GmTurnOptions): Promise<GmPolicyResponse>;
 }
 
 export interface HttpGmServiceOptions {
