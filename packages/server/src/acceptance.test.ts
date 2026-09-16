@@ -34,6 +34,7 @@ import {
 } from '@deliberate/protocol';
 
 import { buildApp } from './app.js';
+import type { CacheStats } from './gm/cache.js';
 import { GM_BRAIN_POLICY } from './gm/loop.js';
 import { tokensFrom, usdFor } from './gm/meters.js';
 import { httpGmService, type GmService, type GmTurnResponse } from './gm/service.js';
@@ -709,13 +710,16 @@ describe.skipIf(!live)(`${SCRIPT}: a ten-turn playthrough against the live model
       expect(app.room.engine.hash()).toBe(beforeRefusal);
 
       const finalHash = app.room.engine.hash();
+      // Read before the app closes: the skill cache is in memory, and the recording carries what
+      // the policies *did* rather than how many turns they took (ALE-37).
+      const caches = app.gm.cache();
 
       // The recording is only complete once the file is closed with the app.
       await app.close();
       if (process.env['DELIBERATE_WRITE_FIXTURE']) copyFileSync(path, bankFile(PLAY));
 
       const lines = parseRecording(readFileSync(path, 'utf8'));
-      report(timings, usage, lines);
+      report(timings, usage, lines, caches);
       assertAcceptance(lines, { ...PLAY, playerTurns: TURNS.length });
       // The live engine and a fresh engine fed only the recorded intents agree, byte for byte.
       expect(replay(lines, createEngine).finalHash).toBe(finalHash);
@@ -732,6 +736,7 @@ function report(
   timings: { turn: number; previewMs: number; goMs: number; afterGoMs: number }[],
   usage: { phase: string; usage: Record<string, number> }[],
   lines: RecordingLine[],
+  caches?: { preview: CacheStats; decisions: CacheStats; policies: CacheStats },
 ): void {
   const totals = usage.reduce(
     (acc, u) => {
@@ -762,6 +767,17 @@ function report(
   const earned = gm.filter(
     (l) => !l.verdict.ok && l.toolCalls.every((c) => c.args['npc_id'] !== 'nobody'),
   );
+  if (caches) {
+    // ALE-37's number: NPC turns taken without a model call, over NPC turns taken at all.
+    const skill = caches.policies.hits + caches.decisions.hits;
+    const npcTurns = skill + caches.policies.misses;
+    const rate = npcTurns ? ((skill / npcTurns) * 100).toFixed(0) : '0';
+    console.log(
+      `\nskill cache: ${caches.policies.hits} NPC turns from a policy, ` +
+        `${caches.decisions.hits} from the decision cache, ${caches.policies.misses} asked ` +
+        `of the model — ${rate}% served without a model call (${caches.policies.size} policies held)`,
+    );
+  }
   console.log(
     `recorded lines ${lines.length} | GM mutations ${gm.length} | ` +
       `refusals the model earned ${earned.length}` +
