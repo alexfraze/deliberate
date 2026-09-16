@@ -140,7 +140,9 @@ def make_save_policy_tool(draft: PolicyDraft, *, timeout_seconds: int = 5) -> Lo
             ast.parse(code)
         except SyntaxError as exc:
             return GmToolResult(
-                ok=False, kind="query", reason=f"the policy does not parse: {exc.msg} (line {exc.lineno})"
+                ok=False,
+                kind="query",
+                reason=f"the policy does not parse: {exc.msg} (line {exc.lineno})",
             )
 
         proposed: list[dict[str, Any]] = []

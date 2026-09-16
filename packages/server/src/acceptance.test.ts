@@ -598,6 +598,9 @@ describe.skipIf(!live)(`${SCRIPT}: a ten-turn playthrough against the live model
     // Tallies what the turn cost. The loop does not need `usage`, so it drops it; the acceptance
     // run is the one caller that has to report a price per turn.
     const gm: GmService = {
+      // Policies (ALE-37) pass straight through: the run is judged on what reached the engine,
+      // and a policy reaches it through the same door with the same verdicts.
+      policy: (request, options) => inner.policy(request, options),
       async turn(request, options): Promise<GmTurnResponse> {
         const response = await inner.turn(request, options);
         usage.push({ phase: request.phase, usage: response.usage ?? {} });

@@ -43,6 +43,8 @@ afterEach(async () => {
  */
 function rememberingGm(seen: GmTurnRequest[]): GmService {
   return {
+    // No policies here: this game master never writes one, so it is never asked to run one.
+    policy: () => Promise.resolve({ ok: false, error: 'no policies', trace: [] }),
     async turn(request) {
       seen.push(request);
       const ledger = Array.isArray(request.memory['ledger']) ? request.memory['ledger'] : [];

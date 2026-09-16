@@ -9,11 +9,15 @@
 export {
   createTurnCache,
   decisionKey,
+  policyKey,
   previewKey,
+  stanceOf,
   DEFAULT_CACHE_SIZE,
   type CacheStats,
   type CachedDecision,
+  type CachedPolicy,
   type CachedPreview,
+  type Stance,
   type TurnCache,
 } from './cache.js';
 export {
@@ -53,6 +57,9 @@ export {
   DEFAULT_GM_TIMEOUT_MS,
   EMPTY_MEMORY,
   type GmPhase,
+  type GmPolicyProgram,
+  type GmPolicyRequest,
+  type GmPolicyResponse,
   type GmService,
   type GmToolCallRecord,
   type GmTurnOptions,
@@ -61,7 +68,13 @@ export {
   type HttpGmServiceOptions,
   type MemoryBlocks,
 } from './service.js';
-export { stubGmService, type GmScript, type ScriptedCall, type ScriptedTurn } from './stub.js';
+export {
+  stubGmService,
+  type GmScript,
+  type PolicyScript,
+  type ScriptedCall,
+  type ScriptedTurn,
+} from './stub.js';
 export {
   executeGmToolRequest,
   parseGmToolRequest,

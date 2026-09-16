@@ -153,6 +153,7 @@ function harness(script: (request: GmTurnRequest) => ScriptedTurn) {
   // The stub reports no usage — it never called a model. Wrapping it is how a test gets a
   // realistic bill without spending one, and it is the same seam the ALE-17 harness tallies on.
   const gm = {
+    policy: inner.policy,
     async turn(request: GmTurnRequest, options?: Parameters<typeof inner.turn>[1]) {
       const response: GmTurnResponse = await inner.turn(request, options);
       return { ...response, usage: { ...M1_USAGE } };

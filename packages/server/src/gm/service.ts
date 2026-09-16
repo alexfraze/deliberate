@@ -61,6 +61,42 @@ export interface GmTurnResponse {
   memory: MemoryBlocks;
   usage?: Record<string, number>;
   prompt_tokens_estimate?: number;
+  /** A reusable NPC policy the game master wrote this turn, if it wrote one (ALE-37). */
+  policy?: GmPolicyProgram | null;
+}
+
+/** A policy program as the service hands it back. Node decides what to key it on; see `cache.ts`. */
+export interface GmPolicyProgram {
+  code: string;
+  note?: string;
+}
+
+/**
+ * `POST /policy` — run a saved policy for one NPC turn, with no model in the loop (ALE-37).
+ *
+ * Same discipline as `/turn`: `state` is the summary the engine already computed, and
+ * `engine_token` names the engine the policy's calls act on. The service still holds no world
+ * state and does not remember the policy between requests — Node owns the skill cache.
+ */
+export interface GmPolicyRequest {
+  session: string;
+  turn: number;
+  engine_token: string | null;
+  state: Record<string, unknown>;
+  /** The entity whose turn the policy is taking. */
+  acting: EntityId;
+  code: string;
+}
+
+export interface GmPolicyResponse {
+  /**
+   * Whether the *program* ran. `false` means it raised or was killed for running too long — never
+   * that the engine refused something, which is an ordinary verdict on an ordinary trace line.
+   */
+  ok: boolean;
+  error?: string | null;
+  trace: GmToolCallRecord[];
+  stdout?: string;
 }
 
 export interface GmTurnOptions {
@@ -87,6 +123,11 @@ export interface GmService {
    * whether a model is actually in the loop (ALE-39) instead of leaving the player to infer it.
    */
   health?(): Promise<GmHealth | null>;
+  /**
+   * Runs a policy the game master wrote earlier (ALE-37). The expensive half of an NPC turn was a
+   * Claude call; this is a sandboxed subprocess and a few localhost round trips instead.
+   */
+  policy(request: GmPolicyRequest, options?: GmTurnOptions): Promise<GmPolicyResponse>;
 }
 
 export interface HttpGmServiceOptions {
@@ -116,7 +157,29 @@ export function httpGmService(options: HttpGmServiceOptions): GmService {
   const base = options.baseUrl.replace(/\/$/, '');
   const url = `${base}/turn`;
 
+  const post = async (
+    path: string,
+    body: unknown,
+    callOptions?: GmTurnOptions,
+  ): Promise<unknown> => {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const signal = callOptions?.signal ? AbortSignal.any([timeout, callOptions.signal]) : timeout;
+    const response = await doFetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!response.ok) {
+      throw new GmServiceError(`the game master answered ${response.status}`, response.status);
+    }
+    return response.json();
+  };
+
   return {
+    async policy(request, callOptions) {
+      return (await post('/policy', request, callOptions)) as GmPolicyResponse;
+    },
     async health() {
       try {
         const response = await doFetch(`${base}/healthz`, {

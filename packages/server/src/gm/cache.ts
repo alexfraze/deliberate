@@ -1,5 +1,5 @@
 import { canonicalize } from '@deliberate/engine';
-import type { Diff, EntityId, GmToolCall, Intent, StateHash } from '@deliberate/protocol';
+import type { Diff, EntityId, GmToolCall, Intent, Snapshot, StateHash } from '@deliberate/protocol';
 
 /**
  * The preview and NPC-decision cache (ALE-22) — the `(state, action)` memoisation the blueprint
@@ -43,6 +43,8 @@ export interface TurnCache<T> {
   /** The value for `key`, marked most recently used, or `undefined`. Counts a hit or a miss. */
   get(key: string): T | undefined;
   set(key: string, value: T): void;
+  /** Forgets one entry. The skill cache uses it to retire a policy that stopped working. */
+  delete(key: string): void;
   clear(): void;
   stats(): CacheStats;
 }
@@ -84,6 +86,9 @@ export function createTurnCache<T>(max: number = DEFAULT_CACHE_SIZE): TurnCache<
         entries.delete(oldest);
       }
     },
+    delete(key) {
+      entries.delete(key);
+    },
     clear() {
       entries.clear();
     },
@@ -105,4 +110,84 @@ export function previewKey(hash: StateHash, intent: Intent | null, text: string 
 /** The key for one NPC's turn: the world, and whose turn it is. */
 export function decisionKey(hash: StateHash, acting: EntityId): string {
   return `${hash}|npc|${acting}`;
+}
+
+// -----------------------------------------------------------------------------------------------
+// The skill cache (ALE-37)
+// -----------------------------------------------------------------------------------------------
+
+/**
+ * A policy the game master wrote for one NPC: a Python program the server runs in the GM service's
+ * sandbox to take that NPC's turn, instead of asking the model what it does.
+ *
+ * Source, not behaviour, and not state. Nothing happens because a policy exists; something happens
+ * when it runs and the engine accepts one of the calls it proposes — through the same `/gm/tool`
+ * door, with the same validation and the same freshly rolled dice.
+ */
+export interface CachedPolicy {
+  code: string;
+  /** The game master's one line about what it does. Logs and traces only. */
+  note: string;
+  /** The turn it was written on, so a log can say how long a policy has been serving. */
+  turn: number;
+}
+
+/**
+ * The disposition bands `content/npcs` already gates its dialogue on (`maxDisposition: -20`,
+ * `minDisposition: 25`). Reusing the content's own thresholds rather than inventing new ones keeps
+ * "the situation changed" meaning the same thing to the policy cache as it does to the writing.
+ */
+export type Stance = 'hostile' | 'wary' | 'warm';
+
+export function stanceOf(disposition: number): Stance {
+  if (disposition < -20) return 'hostile';
+  if (disposition < 25) return 'wary';
+  return 'warm';
+}
+
+/**
+ * The key for one NPC's policy — and the answer to "regenerate only when the situation changes".
+ *
+ * The state hash cannot be the key here. It is the right key for a *decision*, which is an answer
+ * to one exact world, but a policy is a strategy for a *kind* of world: keyed on the hash it would
+ * be written once and never read again, because the world moves every turn. So the key is the
+ * coarsest description of the situation that still makes a different policy necessary:
+ *
+ * - **who is acting.** Per-NPC, not per-archetype. The archetype is not in the snapshot — it is a
+ *   template id the engine keeps for `spawn` — so keying on it would mean either putting it into
+ *   the entity (which changes the state hash and reddens every recording in the bank) or keeping a
+ *   second entity-to-archetype table in the server, a copy of a fact the engine owns. And a policy
+ *   is a plan for a *person*: `content/npcs` gives each NPC its own goals, and the guard's "do not
+ *   strike the player first" is not the merchant's strategy.
+ * - **whether initiative is running.** Fighting and not fighting are different problems.
+ * - **which factions are still standing.** Target selection is about who is in the room. The last
+ *   member of a faction dying is the clearest "the situation changed" there is.
+ * - **how this NPC feels about the player**, in the three bands above. A guard whose disposition
+ *   flipped mid-scene wants a different program, not the same one applied harder.
+ *
+ * Everything finer than that — positions, hit points, whose turn is next, how much of the action
+ * economy is left — is deliberately *not* in the key, because the policy reads all of it out of
+ * `state` on the turn it runs. That is the whole difference between a cached decision and a cached
+ * skill: the decision is frozen, the skill re-decides from live state every time.
+ *
+ * A key that is too coarse cannot produce a wrong-but-accepted turn, because a policy accepts
+ * nothing: every call it proposes is validated by the engine, and a stale one is refused with a
+ * reason like any other. What it can produce is a turn where the NPC lands nothing — and the loop
+ * treats that as the policy having expired, retires it, and asks the model instead.
+ */
+export function policyKey(snapshot: Snapshot, acting: EntityId): string {
+  const factions = new Set<string>();
+  let player: EntityId | null = null;
+  for (const entity of Object.values(snapshot.entities)) {
+    if (entity.components.brain?.policy === 'player') player = entity.id;
+    if (entity.components.health?.conditions.includes('dead')) continue;
+    factions.add(entity.components.faction?.id ?? 'none');
+  }
+  const toward = snapshot.entities[acting]?.components.disposition?.toward ?? {};
+  return canonicalize({
+    acting,
+    combat: snapshot.initiative !== null,
+    factions: [...factions].sort(),
+    stance: stanceOf(player ? (toward[player] ?? 0) : 0),
+  });
 }

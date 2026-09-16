@@ -149,7 +149,9 @@ def create_app(
         policy on a machine that had one.
         """
         if not settings.policy_tool_enabled:
-            raise HTTPException(status_code=503, detail="NPC policies are disabled (GM_POLICY_TOOL=0).")
+            raise HTTPException(
+                status_code=503, detail="NPC policies are disabled (GM_POLICY_TOOL=0)."
+            )
         return run_policy(
             request,
             engine=resolve_engine(),
