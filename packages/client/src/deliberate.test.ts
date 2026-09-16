@@ -2,7 +2,18 @@ import { describe, expect, it } from 'vitest';
 
 import type { Diff } from '@deliberate/protocol';
 
-import { canGo, describeStaged, initialState, telegraph } from './deliberate.js';
+import {
+  canGo,
+  describeEncounter,
+  describeGm,
+  describeMode,
+  describeStaged,
+  describeTurnSource,
+  initialState,
+  telegraph,
+  NO_GM,
+  type GmAvailability,
+} from './deliberate.js';
 
 const NAMES: Record<string, string> = { player: 'Player', guard: 'Halloran' };
 const nameOf = (id: string): string => NAMES[id] ?? id;
@@ -54,5 +65,53 @@ describe('telegraphed reactions', () => {
   it('names an entity it has never seen by its id rather than dropping the line', () => {
     const diffs: Diff[] = [{ type: 'DialogueLine', speaker: 'npc:ghost', text: 'oh', to: null }];
     expect(telegraph(diffs, nameOf)).toEqual(['npc:ghost: “oh”']);
+  });
+});
+
+describe('saying who ran the turn (ALE-39)', () => {
+  const live: GmAvailability = {
+    server: true,
+    configured: true,
+    reachable: true,
+    model: 'claude-opus-5',
+    narrateModel: 'claude-sonnet-5',
+  };
+  const none: GmAvailability = { ...NO_GM, server: true };
+
+  it('says in words that deliberate mode off means no game master', () => {
+    expect(describeMode(false, live)).toBe('engine only — the game master is not consulted');
+    expect(describeMode(true, live)).toContain('the game master previews every click');
+  });
+
+  it('does not promise a game master that is absent or silent', () => {
+    expect(describeMode(true, { ...live, reachable: false })).toContain(
+      'the game master is not answering',
+    );
+    expect(describeMode(true, none)).toContain('no game master is configured');
+    expect(describeMode(true, null)).not.toContain('game master previews');
+  });
+
+  it('names the models, and names the narration tier only when it differs', () => {
+    expect(describeGm(live)).toBe('game master: claude-opus-5 · narration claude-sonnet-5');
+    expect(describeGm({ ...live, narrateModel: 'claude-opus-5' })).toBe(
+      'game master: claude-opus-5',
+    );
+    expect(describeGm(none)).toContain('GM_SERVICE_URL is unset');
+    expect(describeGm(NO_GM)).toContain('offline fixture');
+    expect(describeGm(null)).toContain('asking the server');
+  });
+
+  it('never claims the game master ran a turn it was not asked about', () => {
+    expect(describeTurnSource('engine', live)).toContain('the game master was never asked');
+    expect(describeTurnSource('previewed', live)).toContain('the game master previewed it');
+    expect(describeTurnSource('previewed', none)).toContain('no game master was asked');
+    expect(describeTurnSource('committed', live)).toBe('this turn: the game master ran it');
+    expect(describeTurnSource('committed', none)).toContain('no game master was asked');
+    expect(describeTurnSource('none', live)).toContain('nothing taken yet');
+  });
+
+  it('signposts that initiative only exists inside an encounter', () => {
+    expect(describeEncounter(false)).toContain('End turn has nothing to end');
+    expect(describeEncounter(true)).toContain('hands initiative to the NPCs');
   });
 });

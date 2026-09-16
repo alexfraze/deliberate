@@ -79,6 +79,21 @@ test('play the M0 fixture by UI alone, then replay the recording', async ({ page
   // Out of combat there is no turn order, and the HUD says so.
   await expect(hud(page)).toContainText('exploration — no encounter');
 
+  // --- the game master is discoverable (ALE-39) ------------------------------------------------
+  // Deliberate mode is ON out of the box, and the panel says in words what that means and whether
+  // there is a model behind the server at all. There is none on this machine, and it says so.
+  const panel = page.locator('#deliberate');
+  await expect(page.locator('#deliberate-toggle')).toBeChecked();
+  // No GM_SERVICE_URL on this machine, and the panel refuses to imply otherwise.
+  await expect(panel).toContainText('no game master is configured');
+  await expect(panel).toContainText('GM_SERVICE_URL is unset');
+  await expect(panel).toContainText('End turn has nothing to end');
+  await expect(panel).toContainText('this turn: nothing taken yet');
+
+  // The M0 path below is the engine-only one, which is now an explicit choice.
+  await page.locator('#deliberate-toggle').uncheck();
+  await expect(panel).toContainText('engine only — the game master is not consulted');
+
   // --- select the player -----------------------------------------------------------------------
   await clickAt(page, await screenOfEntity(page, PLAYER));
   await expect(hud(page)).toContainText('Player (party) · 12/12 hp · (2, 2)');
@@ -93,6 +108,8 @@ test('play the M0 fixture by UI alone, then replay the recording', async ({ page
   await clickAt(page, await screenOfTile(page, { x: 7, y: 3 }));
   await settle(page);
   await expect(hud(page)).toContainText('Player (party) · 12/12 hp · (7, 3)');
+  // …and the panel is explicit that no game master was involved in it.
+  await expect(panel).toContainText('this turn: engine only — the game master was never asked');
 
   // --- attack the dummy ------------------------------------------------------------------------
   await clickAt(page, await screenOfEntity(page, DUMMY_A));
@@ -135,6 +152,8 @@ test('play the M0 fixture by UI alone, then replay the recording', async ({ page
   await expect(staged).toHaveText('Player → (7, 4)');
   await expect(reactions.first()).toHaveText('Player moves to (7, 4).');
   await expect(hud(page)).toContainText('Player (party) · 12/12 hp · (7, 3)');
+
+  await expect(panel).toContainText('the engine previewed it — no game master was asked');
 
   await page.locator('#go').click();
   await settle(page);

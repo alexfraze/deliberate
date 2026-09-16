@@ -69,8 +69,24 @@ export interface GmTurnOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * What the service's own `/healthz` says about itself. Only the fields anything outside this
+ * package needs: which model runs a turn, which one narrates, and whether it has credentials.
+ */
+export interface GmHealth {
+  model: string | null;
+  narrateModel: string | null;
+  liveApi: boolean;
+}
+
 export interface GmService {
   turn(request: GmTurnRequest, options?: GmTurnOptions): Promise<GmTurnResponse>;
+  /**
+   * The service's own `/healthz`, or null when it did not answer. Optional, because the scripted
+   * stub has no HTTP behind it. `/healthz` here reports the result so the client can say on screen
+   * whether a model is actually in the loop (ALE-39) instead of leaving the player to infer it.
+   */
+  health?(): Promise<GmHealth | null>;
 }
 
 export interface HttpGmServiceOptions {
@@ -86,6 +102,9 @@ export interface HttpGmServiceOptions {
 
 export const DEFAULT_GM_TIMEOUT_MS = 20_000;
 
+/** A health probe is answered from memory by the service, so it gets a much shorter leash. */
+export const GM_HEALTH_TIMEOUT_MS = 2_000;
+
 /**
  * The real client. Non-streaming: the service streams from the model, but this hop returns once,
  * and `onChunk` is called with the finished narration. Server-sent events over this hop are the
@@ -94,9 +113,29 @@ export const DEFAULT_GM_TIMEOUT_MS = 20_000;
 export function httpGmService(options: HttpGmServiceOptions): GmService {
   const doFetch = options.fetch ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_GM_TIMEOUT_MS;
-  const url = `${options.baseUrl.replace(/\/$/, '')}/turn`;
+  const base = options.baseUrl.replace(/\/$/, '');
+  const url = `${base}/turn`;
 
   return {
+    async health() {
+      try {
+        const response = await doFetch(`${base}/healthz`, {
+          signal: AbortSignal.timeout(GM_HEALTH_TIMEOUT_MS),
+        });
+        if (!response.ok) return null;
+        const body = (await response.json()) as Record<string, unknown>;
+        const text = (key: string): string | null =>
+          typeof body[key] === 'string' ? body[key] : null;
+        return {
+          model: text('model'),
+          narrateModel: text('narrate_model'),
+          liveApi: body['live_api'] === true,
+        };
+      } catch {
+        // Unreachable is a fact about the world, not an error to propagate: `/healthz` says so.
+        return null;
+      }
+    },
     async turn(request, callOptions) {
       const timeout = AbortSignal.timeout(timeoutMs);
       const signal = callOptions?.signal ? AbortSignal.any([timeout, callOptions.signal]) : timeout;

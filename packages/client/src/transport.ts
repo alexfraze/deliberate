@@ -13,6 +13,7 @@ import {
   type Tile,
 } from '@deliberate/protocol';
 
+import { NO_GM, type GmAvailability } from './deliberate.js';
 import { fixtureScript, fixtureSnapshot, fixtureSnapshotMessage } from './fixtures/index.js';
 import { isWalkable, tileDistance } from './grid.js';
 import { encodeClientMessage, parseServerMessage } from './messages.js';
@@ -151,6 +152,31 @@ export function connectFixture(handlers: TransportHandlers): Transport {
       handlers.onStatus('closed');
     },
   };
+}
+
+/**
+ * Asks the server whether a game master is behind it (ALE-39). `/healthz` is a plain GET the vite
+ * dev server already proxies, so this needs no protocol change and no socket: the panel wants the
+ * answer before the first click, and the socket may still be connecting.
+ *
+ * Every failure is the same answer — "nothing to ask" — because from the player's seat an absent
+ * server and an unreachable one both mean no model ran.
+ */
+export async function fetchGmHealth(): Promise<GmAvailability> {
+  try {
+    const response = await fetch('/healthz');
+    if (!response.ok) return NO_GM;
+    const gm = ((await response.json()) as { gm?: Partial<GmAvailability> }).gm;
+    return {
+      server: true,
+      configured: gm?.configured === true,
+      reachable: gm?.reachable === true,
+      model: gm?.model ?? null,
+      narrateModel: gm?.narrateModel ?? null,
+    };
+  } catch {
+    return NO_GM;
+  }
 }
 
 /** `?fixture=1` (or `#fixture`) picks the offline stand-in. */

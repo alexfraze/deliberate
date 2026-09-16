@@ -8,9 +8,13 @@ Every message carries `room` (the MVP has one room, `"main"`, the `DEFAULT_ROOM`
 multiplayer does not change the shapes. Text frames only; binary frames are decoded as UTF-8 and
 must still be JSON.
 
-`GET /healthz` answers `{ ok, engine, protocol, room, turn, recording, save }` and needs no socket.
-`recording` is the JSONL file this session is being written to, or `null` when recording is off;
-`save` is the file `POST /save` writes, or `null` when saving is off.
+`GET /healthz` answers `{ ok, engine, protocol, room, turn, recording, cache, meters, save, gm }`
+and needs no socket. `recording` is the JSONL file this session is being written to, or `null` when
+recording is off; `save` is the file `POST /save` writes, or `null` when saving is off. `gm` is
+`{ configured, reachable, model, narrateModel }` — whether `GM_SERVICE_URL` is set, whether the
+service answered its own `/healthz`, and which models it runs. The client reads it so it can say on
+screen whether a model is in the loop at all (ALE-39); `configured: false` means no game master
+runs on either path, and preview is the engine's own resolution.
 
 ## The turn number
 

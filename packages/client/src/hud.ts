@@ -48,7 +48,11 @@ export function createHud(hudElement: HTMLElement, overlay: HTMLElement): Hud {
   const render = (): void => {
     const lines = [line('renderer', state.backend), line('server', state.status)];
     lines.push(line('selected', state.selection ?? 'nothing — click an entity'));
-    lines.push(line('turn', state.turn ?? 'exploration — no encounter'));
+    // Out of combat there is no initiative at all, so nothing takes a turn and no NPC acts. That
+    // was a two-word line a stranger read as "nothing has started yet" (ALE-39).
+    lines.push(
+      line('turn', state.turn ?? 'exploration — no encounter, so no initiative and no NPC turns'),
+    );
     if (state.hint) lines.push(`<span class="hud-hint">${escapeHtml(state.hint)}</span>`);
     if (state.error)
       lines.push(`<span class="hud-error">refused: ${escapeHtml(state.error)}</span>`);

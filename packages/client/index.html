@@ -104,6 +104,36 @@
         border-radius: 6px;
         cursor: pointer;
       }
+      /* The ALE-39 lines. Never hidden with the rest of the panel: with deliberate mode off the
+         panel used to collapse to a bare checkbox, which is precisely when the player most needs
+         to be told that no game master is being consulted. */
+      #deliberate .dl-mode {
+        margin-top: 6px;
+        color: #9fd0ff;
+      }
+      #deliberate:not(.dl-open) .dl-mode {
+        color: #ffb86b;
+        font-weight: 600;
+      }
+      #deliberate .dl-gm,
+      #deliberate .dl-encounter,
+      #deliberate .dl-source {
+        margin-top: 4px;
+        color: #7d8b99;
+        font-size: 12px;
+      }
+      #deliberate.dl-nogm .dl-gm {
+        color: #ffb86b;
+      }
+      #deliberate .dl-source {
+        margin-top: 8px;
+        padding-top: 6px;
+        border-top: 1px solid #1e2733;
+        color: #c8cdd3;
+      }
+      #deliberate.dl-engine-only .dl-source {
+        color: #ffb86b;
+      }
       #deliberate .dl-staged {
         margin-top: 8px;
         color: #9fd0ff;

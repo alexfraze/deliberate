@@ -300,22 +300,47 @@ export function createGameScene(): GameScene {
   let viewportWidth = 1;
   let viewportHeight = 1;
 
+  /**
+   * The frustum, corrected for the part of the viewport a fixed overlay covers.
+   *
+   * `isoCameraFrame` fits the map to the *whole* viewport. Shifting that left by half the panel
+   * is not enough: the map still spans the full width, so its right-hand tiles sit under the panel
+   * and cannot be clicked at all. Widening the frustum by the same ratio shrinks the map into the
+   * space that is actually visible, and the shift then centres it there. Both halves scale
+   * together so the isometric projection stays square.
+   */
+  function frustum(): {
+    halfWidth: number;
+    halfHeight: number;
+    shift: number;
+    near: number;
+    far: number;
+  } {
+    const frame = isoCameraFrame(map!, viewportWidth / viewportHeight, zoom);
+    const visible = Math.max(1, viewportWidth - viewportInset);
+    const scale = viewportWidth / visible;
+    const halfWidth = frame.halfWidth * scale;
+    const halfHeight = frame.halfHeight * scale;
+    const worldPerPixel = (halfWidth * 2) / Math.max(1, viewportWidth);
+    return {
+      halfWidth,
+      halfHeight,
+      shift: (viewportInset / 2) * worldPerPixel,
+      near: frame.near,
+      far: frame.far,
+    };
+  }
+
   function frameCamera(): void {
     if (!map) return;
     const frame = isoCameraFrame(map, viewportWidth / viewportHeight, zoom);
-    camera.left = -frame.halfWidth;
-    camera.right = frame.halfWidth;
-    camera.top = frame.halfHeight;
-    camera.bottom = -frame.halfHeight;
-    camera.near = frame.near;
-    camera.far = frame.far;
-
-    // Shift the frustum left by half the covered width so the map centres in the space the
-    // player can actually see, rather than behind the panel.
-    const worldPerPixel = (frame.halfWidth * 2) / Math.max(1, viewportWidth);
-    const inset = (viewportInset / 2) * worldPerPixel;
-    camera.left -= inset;
-    camera.right -= inset;
+    const { halfWidth, halfHeight, shift, near, far } = frustum();
+    camera.left = -halfWidth - shift;
+    camera.right = halfWidth - shift;
+    camera.top = halfHeight;
+    camera.bottom = -halfHeight;
+    camera.near = near;
+    camera.far = far;
 
     camera.position.set(frame.position.x + panX, frame.position.y, frame.position.z + panZ);
     camera.lookAt(frame.target.x + panX, frame.target.y, frame.target.z + panZ);
@@ -324,8 +349,7 @@ export function createGameScene(): GameScene {
 
   const panByPixels = (dx: number, dy: number): void => {
     if (!map) return;
-    const frame = isoCameraFrame(map, viewportWidth / viewportHeight, zoom);
-    const worldPerPixel = (frame.halfWidth * 2) / Math.max(1, viewportWidth);
+    const worldPerPixel = (frustum().halfWidth * 2) / Math.max(1, viewportWidth);
     // Screen right/down mapped onto the ground plane for this fixed isometric yaw. Dragging
     // moves the world with the cursor, so the deltas are negated.
     const right = { x: Math.SQRT1_2, z: -Math.SQRT1_2 };
