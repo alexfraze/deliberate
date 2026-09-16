@@ -2,7 +2,12 @@ import { resolve } from 'node:path';
 
 import { buildApp } from './app.js';
 import { DEFAULT_CACHE_SIZE } from './gm/cache.js';
-import { NARRATE_BUDGET_MS, PREVIEW_BUDGET_MS, RESOLVE_BUDGET_MS } from './gm/loop.js';
+import {
+  MAX_SPECULATIONS_PER_TURN,
+  NARRATE_BUDGET_MS,
+  PREVIEW_BUDGET_MS,
+  RESOLVE_BUDGET_MS,
+} from './gm/loop.js';
 import { httpGmService } from './gm/service.js';
 import { loadSave } from './save.js';
 
@@ -49,6 +54,17 @@ const budgets = {
 // GM_CACHE_SIZE=0 to turn it off and measure the cold path.
 const cacheSize = Number(process.env['GM_CACHE_SIZE'] ?? DEFAULT_CACHE_SIZE);
 
+// Speculative preview warming (ALE-40) — the kill switch, because this is the one feature that can
+// spend money on an action nobody took. `GM_SPECULATE=0` (or `off`) disables it; any other number
+// is the per-turn ceiling. The default is deliberately small: see `MAX_SPECULATIONS_PER_TURN`.
+const speculateEnv = process.env['GM_SPECULATE'];
+const speculationsPerTurn =
+  speculateEnv === undefined || speculateEnv === ''
+    ? MAX_SPECULATIONS_PER_TURN
+    : speculateEnv === 'off'
+      ? 0
+      : Number(speculateEnv) || 0;
+
 const app = await buildApp({
   logger: true,
   recordings,
@@ -57,11 +73,16 @@ const app = await buildApp({
   scene,
   budgets,
   ...(Number.isFinite(cacheSize) ? { cacheSize } : {}),
+  speculationsPerTurn,
   gm: gmUrl
     ? httpGmService({ baseUrl: gmUrl, timeoutMs: Math.max(...Object.values(budgets)) })
     : null,
 });
 if (gmUrl) app.log.info({ gm: gmUrl }, 'game master service');
+app.log.info(
+  { perTurn: speculationsPerTurn },
+  speculationsPerTurn > 0 ? 'speculative preview warming is on' : 'speculative warming is off',
+);
 if (app.recording) app.log.info({ file: app.recording.path }, 'recording this session');
 if (load) app.log.info({ turn: load.turn, hash: load.hash }, 'resumed a save');
 if (app.save) app.log.info({ file: app.save.path }, 'POST /save writes here');

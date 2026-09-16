@@ -7,6 +7,7 @@ import {
   type PreviewMessage,
   type PreviewRequestMessage,
   type Snapshot,
+  type SpeculateMessage,
   type StateHash,
 } from '@deliberate/protocol';
 
@@ -70,8 +71,36 @@ export const NARRATE_BUDGET_MS = 3_000;
 /** Hard stop on NPC turns resolved in one GO, so a loop in the world cannot become a loop here. */
 const MAX_NPC_TURNS = 12;
 
+/**
+ * Speculative previews the server will pay for in one player turn (ALE-40), and the reason there
+ * is a number here at all.
+ *
+ * Every speculation is a real model call — a preview costs roughly a tenth of a dollar — so the
+ * ceiling is not a tuning knob, it is the bound on how much a player's *pointer* can spend. Two is
+ * chosen because a speculation the player then commits to costs nothing extra (it moves a call
+ * they were going to make anyway earlier in wall-clock time), so the only money at risk is the
+ * wrong guesses: at most two previews per turn, and in practice fewer, since the loop refuses to
+ * run two at once and a hit spends nothing.
+ *
+ * It is enforced **here** and not only in the client, because the client is a browser and anyone
+ * can open the console. `0` turns speculation off entirely; `src/index.ts` reads `GM_SPECULATE`.
+ */
+export const MAX_SPECULATIONS_PER_TURN = 2;
+
 /** The GM's own brain policy. `content/npcs` stamps it on all three archetypes (ALE-16). */
 export const GM_BRAIN_POLICY = 'gm';
+
+/** The per-turn speculation budget as it stands. Reported on `/healthz` and asserted in tests. */
+export interface SpeculationStats {
+  /** The turn these counters belong to; they reset when the room's turn counter moves. */
+  turn: number;
+  /** Speculative previews started this turn. Never more than `budget`. */
+  spent: number;
+  /** Speculations the server declined: over budget, stale, one already running, or switched off. */
+  dropped: number;
+  /** `speculationsPerTurn`. Zero means speculation is off. */
+  budget: number;
+}
 
 export interface PendingPreview {
   turn: number;
@@ -95,6 +124,12 @@ export interface GmLoopOptions {
   maxNpcTurns?: number;
   /** Entries the preview and NPC-decision caches keep. 0 turns caching off entirely (ALE-22). */
   cacheSize?: number;
+  /**
+   * Speculative previews to pay for per player turn (ALE-40). `0` is the kill switch: the loop
+   * still accepts `speculate` frames and still ignores them, so turning it off is a restart and
+   * not a protocol change.
+   */
+  speculationsPerTurn?: number;
   /** Memory blocks to start from. Non-empty when resuming a save (ALE-23). */
   memory?: MemoryBlocks;
   /** Somewhere to note a GM failure. Defaults to nothing; `buildApp` passes the Fastify logger. */
@@ -107,8 +142,8 @@ export interface GmLoopOptions {
 }
 
 export interface GmLoop {
-  /** Handles one `preview_request` or `go` frame. */
-  handle(socket: RoomSocket, message: PreviewRequestMessage | GoMessage): void;
+  /** Handles one `preview_request`, `go` or `speculate` frame. */
+  handle(socket: RoomSocket, message: PreviewRequestMessage | GoMessage | SpeculateMessage): void;
   /** The preview `go` would commit, or null. Exposed for tests and for `/healthz`. */
   pending(): PendingPreview | null;
   /** Resolves once every in-flight phase has finished. Tests await this instead of sleeping. */
@@ -129,6 +164,8 @@ export interface GmLoop {
    * (ALE-37): a hit is an NPC turn a saved policy took with no model call.
    */
   cache(): { preview: CacheStats; decisions: CacheStats; policies: CacheStats };
+  /** What the pointer has been allowed to spend this turn, and what it was refused (ALE-40). */
+  speculation(): SpeculationStats;
   /** This session so far: p50/p95 after GO and cost per turn (ALE-24). */
   meters(): MeterSummary;
 }
@@ -173,6 +210,11 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   let busy = false;
   /** Set when a real frame arrives, so speculation stops between intents instead of racing it. */
   let abandonSpeculation = false;
+  const speculationBudget = Math.max(0, options.speculationsPerTurn ?? MAX_SPECULATIONS_PER_TURN);
+  /** The per-turn spend, and the key of the one speculation allowed to be in the air (ALE-40). */
+  let speculation: SpeculationStats = { turn: -1, spent: 0, dropped: 0, budget: speculationBudget };
+  let speculatingKey: string | null = null;
+  let speculationAbort: AbortController | null = null;
   /**
    * The turn being metered. Opened by whatever the player does first and closed by GO, so the
    * previews they discarded before committing are counted against the turn they were deliberating
@@ -196,6 +238,8 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     },
     budgetMs: number,
     onChunk?: (chunk: string) => void,
+    /** Cancels the call before its budget is up. Speculation passes one; a real phase does not. */
+    cancel?: AbortSignal,
   ): Promise<{
     narration: string;
     calls: GmToolCall[];
@@ -222,7 +266,12 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
           memory,
           ...(body.wantPolicy ? { want_policy: true } : {}),
         },
-        { signal: AbortSignal.timeout(budgetMs), ...(onChunk ? { onChunk } : {}) },
+        {
+          signal: cancel
+            ? AbortSignal.any([AbortSignal.timeout(budgetMs), cancel])
+            : AbortSignal.timeout(budgetMs),
+          ...(onChunk ? { onChunk } : {}),
+        },
       );
       memory = response.memory ?? memory;
       const calls: GmToolCall[] = [];
@@ -287,6 +336,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     intent: Intent | null,
     text: string | null,
     phase: 'preview' | 'speculate' = 'preview',
+    cancel?: AbortSignal,
   ): Promise<CachedPreview | { refused: string }> => {
     const startedAt = Date.now();
     const key = previewKey(room.engine.hash(), intent, text);
@@ -325,6 +375,8 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
           snapshot: clone.engine.snapshot(),
         },
         previewBudget,
+        undefined,
+        cancel,
       );
       diffs.push(...answer.diffs);
 
@@ -595,27 +647,81 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       });
   };
 
+  /**
+   * This turn's remaining speculation budget, resetting the counters when the turn has moved on.
+   * The turn counter is the natural window: a GO changes the world, so every cached key changes
+   * and the guessing starts again from nothing.
+   */
+  const budgetLeft = (): number => {
+    if (speculation.turn !== room.turn()) {
+      speculation = { turn: room.turn(), spent: 0, dropped: 0, budget: speculationBudget };
+    }
+    return speculation.budget - speculation.spent;
+  };
+
+  const drop = (): Promise<void> => {
+    budgetLeft();
+    speculation.dropped += 1;
+    return inFlight;
+  };
+
   const speculate = (intents: (Intent | null)[]): Promise<void> => {
     // Speculation only fills a cache. It stages nothing, sends nothing, and yields to the player,
     // so the worst case of being wrong about what they will pick is a model call nobody used.
-    if (!caching || !gm || busy) return inFlight;
+    //
+    // Everything that can say no says no here, where it is cheap: caching off, no game master, a
+    // real phase in the air, one speculation already running, or this turn's pointer having spent
+    // its allowance. The client applies the same rules first; this is the copy that counts.
+    if (!caching || !gm) return inFlight;
+    if (busy || speculatingKey !== null || budgetLeft() <= 0) return drop();
     abandonSpeculation = false;
+    const controller = new AbortController();
+    speculationAbort = controller;
+    speculatingKey = previewKey(room.engine.hash(), intents[0] ?? null, null);
     inFlight = inFlight
       .catch(() => {})
       .then(async () => {
         for (const intent of intents) {
-          if (abandonSpeculation || busy) return;
-          await computePreview(intent, null, 'speculate');
+          if (abandonSpeculation || busy || budgetLeft() <= 0) return;
+          // Charged before the call, not after: the budget bounds what may be *started*, and a
+          // crash between the two would otherwise hand the pointer a free retry.
+          speculation.spent += 1;
+          const warmed = await computePreview(intent, null, 'speculate', controller.signal);
+          // The clone refused it before the game master was ever asked, so it cost nothing and is
+          // not charged. Hovering over unreachable ground is how a player reads a map.
+          if ('refused' in warmed && speculation.spent > 0) speculation.spent -= 1;
         }
       })
       .catch((error: unknown) => {
         log(`speculation failed: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        speculatingKey = null;
+        speculationAbort = null;
       });
     return inFlight;
   };
 
+  /**
+   * A real frame has arrived for `key`. If a speculation is in the air for something else, it is a
+   * guess we now know is wrong *and* the player is queued behind it on `inFlight` — so it is
+   * cancelled rather than waited out. A speculation for the same key is the win this whole issue
+   * is about and is left alone: the player is waiting for exactly that answer.
+   */
+  const yieldSpeculation = (key: string | null): void => {
+    if (speculatingKey !== null && speculatingKey !== key) speculationAbort?.abort();
+  };
+
   return {
     handle(socket, message) {
+      if (message.type === 'speculate') {
+        // A hint about a pointer, never a request. Anything wrong with it — stale turn, no budget,
+        // one already running — is answered with silence: the player asked for nothing, and an
+        // error about where they are hovering is noise on a screen that has real errors to show.
+        if (message.turn === room.turn()) void speculate([message.intent]);
+        else void drop();
+        return;
+      }
       if (message.turn !== room.turn()) {
         refuse(
           socket,
@@ -624,8 +730,14 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
         socket.send(JSON.stringify(room.snapshotMessage()));
         return;
       }
-      if (message.type === 'preview_request') run(socket, () => preview(socket, message));
-      else run(socket, () => go(socket, message));
+      if (message.type === 'preview_request') {
+        yieldSpeculation(previewKey(room.engine.hash(), message.intent, message.text ?? null));
+        run(socket, () => preview(socket, message));
+      } else {
+        // GO commits a preview that already came back; nothing in the air can help it.
+        yieldSpeculation(null);
+        run(socket, () => go(socket, message));
+      }
     },
     pending: () => pending,
     idle: () => inFlight,
@@ -636,6 +748,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       decisions: decisions.stats(),
       policies: { hits: policyHits, misses: policyMisses, size: policies.stats().size },
     }),
+    speculation: () => ({ ...speculation }),
     meters: () => meters.summary(),
   };
 }

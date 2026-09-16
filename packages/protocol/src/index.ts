@@ -509,7 +509,29 @@ export interface GoMessage {
   turn: number;
 }
 
-export type ClientMessage = JoinMessage | IntentMessage | PreviewRequestMessage | GoMessage;
+/**
+ * Warm the preview cache for an action the player is *looking at* but has not asked for (ALE-40).
+ *
+ * It is a `preview_request` with the answer thrown away: the server computes the same preview on
+ * the same cloned engine and files it under the same `(state hash, intent, text)` key, but sends
+ * nothing back and stages nothing, so a `go` after one of these still refuses. If the player then
+ * previews that intent for real, the answer is already in memory and arrives in ~0 s.
+ *
+ * **Every one of these costs a model call**, so the server — not the client, which is not trusted
+ * — caps how many it will honour per turn and refuses to run two at once. A dropped speculation is
+ * silent: it is not a rejection a player did anything to deserve.
+ */
+export interface SpeculateMessage {
+  type: 'speculate';
+  room: RoomId;
+  /** The turn it was composed against. A stale one is dropped rather than answered. */
+  turn: number;
+  /** The single most likely intent for whatever is under the cursor. */
+  intent: Intent;
+}
+
+export type ClientMessage =
+  JoinMessage | IntentMessage | PreviewRequestMessage | GoMessage | SpeculateMessage;
 
 /** Reply to `join`: the authoritative state and its hash. */
 export interface SnapshotMessage {
@@ -632,6 +654,13 @@ export interface RecordedMeter {
   /** Model calls this turn, and phases answered from the (state hash, intent) cache instead. */
   calls: number;
   cacheHits: number;
+  /**
+   * Of `calls` and `usd`, the share spent warming the cache for actions the player was only
+   * looking at (ALE-40). Optional because recordings written before speculation existed have no
+   * such share; absent reads as zero. This is the number the per-turn speculation cap bounds.
+   */
+  speculations?: number;
+  speculativeUsd?: number;
 }
 
 export type RecordingLine = RecordingHeader | RecordedTurn | RecordedMeter;

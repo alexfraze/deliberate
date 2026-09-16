@@ -150,6 +150,20 @@ export function parseClientFrame(text: string): FrameResult {
       }
       return { ok: true, message: { type: 'go', room, turn: turn as number } };
     }
+    // ALE-40. A hint that the player is hovering over this action; the server may warm its preview
+    // cache with it, or may ignore it entirely. It carries a real intent because a speculation the
+    // player never asked for has no free text to go with it and nothing to say about `null`.
+    case 'speculate': {
+      const turn = value['turn'];
+      if (!Number.isInteger(turn) || (turn as number) < 0) {
+        return bad('A speculation must carry the turn number it was composed against.');
+      }
+      const intent = value['intent'];
+      if (!isIntent(intent)) {
+        return bad(`That is not an action this server understands (${PLAYER_INTENTS}).`);
+      }
+      return { ok: true, message: { type: 'speculate', room, turn: turn as number, intent } };
+    }
     default:
       return bad(`Unknown frame type ${JSON.stringify(value['type']) ?? 'undefined'}.`);
   }

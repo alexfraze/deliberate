@@ -9,6 +9,7 @@ import {
   type IntentMessage,
   type PreviewRequestMessage,
   type RoomId,
+  type SpeculateMessage,
   type ServerMessage,
   type SnapshotMessage,
   type StateHash,
@@ -61,7 +62,7 @@ export type TurnListener = (commit: TurnCommit) => void;
 /** Handles the GM loop's frames. Installed by `buildApp`; absent means the loop is not running. */
 export type GmFrameHandler = (
   socket: RoomSocket,
-  message: PreviewRequestMessage | GoMessage,
+  message: PreviewRequestMessage | GoMessage | SpeculateMessage,
 ) => void;
 
 export interface RoomOptions {
@@ -220,10 +221,14 @@ export function createRoom(options: RoomOptions): Room {
         commitFrame(socket, message);
         return;
       }
-      // `preview_request` and `go` are the GM loop's frames (ALE-32). The room knows nothing about
-      // the game master; `buildApp` installs a handler, and without one the loop is simply off.
+      // `preview_request`, `go` and `speculate` are the GM loop's frames (ALE-32, ALE-40). The
+      // room knows nothing about the game master; `buildApp` installs a handler, and without one
+      // the loop is simply off.
       if (!gmFrames) {
-        refuse(socket, 'No game master is running on this server.');
+        // A speculation is a hint, not a request. A server with no game master has nothing to warm
+        // and the player asked for nothing, so there is nothing to tell them.
+        if (message.type !== 'speculate')
+          refuse(socket, 'No game master is running on this server.');
         return;
       }
       gmFrames(socket, message);
