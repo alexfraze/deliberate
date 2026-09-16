@@ -56,6 +56,13 @@ Server environment: `PORT`, `HOST`, `RECORDINGS_DIR` (empty to record nothing), 
 Without `GM_SERVICE_URL` there is no model in the loop: preview shows the engine's own resolution
 of the staged action and GO commits it.
 
+`GM_SPECULATE` caps how many **speculative previews** the server will pay for per turn (default 2;
+`off` or `0` disables it). Resting the pointer on an action warms the cache for it, so choosing it
+returns the preview in about a tenth of a second instead of tens of seconds — but each warm one is
+a real model call, so the ceiling is enforced here rather than trusted to the browser. `?speculate=0`
+on the client turns it off for one page. What it cost is in the recording: `pnpm meters` reports the
+speculative share of the bill per turn.
+
 Requires Node 22 and pnpm 10 (`corepack enable`).
 
 ## Licensing

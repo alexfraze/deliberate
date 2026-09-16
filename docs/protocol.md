@@ -8,9 +8,12 @@ Every message carries `room` (the MVP has one room, `"main"`, the `DEFAULT_ROOM`
 multiplayer does not change the shapes. Text frames only; binary frames are decoded as UTF-8 and
 must still be JSON.
 
-`GET /healthz` answers `{ ok, engine, protocol, room, turn, recording, cache, meters, save, gm }`
+`GET /healthz` answers
+`{ ok, engine, protocol, room, turn, recording, cache, speculation, meters, save, gm }`
 and needs no socket. `recording` is the JSONL file this session is being written to, or `null` when
-recording is off; `save` is the file `POST /save` writes, or `null` when saving is off. `gm` is
+recording is off; `save` is the file `POST /save` writes, or `null` when saving is off.
+`speculation` is `{ turn, spent, dropped, budget }` — this turn's speculative preview allowance
+(ALE-40). `gm` is
 `{ configured, reachable, model, narrateModel }` — whether `GM_SERVICE_URL` is set, whether the
 service answered its own `/healthz`, and which models it runs. The client reads it so it can say on
 screen whether a model is in the loop at all (ALE-39); `configured: false` means no game master
@@ -28,12 +31,13 @@ commits only if it matches.
 
 ## Client → server
 
-| type              | fields                            | when                                                  |
-| ----------------- | --------------------------------- | ----------------------------------------------------- |
-| `join`            | `room`, `protocol`                | First frame. Server replies with `snapshot`.          |
-| `intent`          | `room`, `turn`, `intent`          | The player commits an action for `turn`, immediately. |
-| `preview_request` | `room`, `turn`, `intent`, `text?` | Ask for a speculative turn (ALE-32). Commits nothing. |
-| `go`              | `room`, `turn`                    | Commit the last preview.                              |
+| type              | fields                            | when                                                         |
+| ----------------- | --------------------------------- | ------------------------------------------------------------ |
+| `join`            | `room`, `protocol`                | First frame. Server replies with `snapshot`.                 |
+| `intent`          | `room`, `turn`, `intent`          | The player commits an action for `turn`, immediately.        |
+| `preview_request` | `room`, `turn`, `intent`, `text?` | Ask for a speculative turn (ALE-32). Commits nothing.        |
+| `go`              | `room`, `turn`                    | Commit the last preview.                                     |
+| `speculate`       | `room`, `turn`, `intent`          | Warm the preview cache for an action being hovered (ALE-40). |
 
 `intent` is one of `move { entity, to }`, `attack { attacker, target, ability }`,
 `cast { caster, spell, target }`, `say { speaker, text, to }`, `end_turn { entity }` — the things a
@@ -48,6 +52,28 @@ author the world" is enforced, and it is enforced by not parsing those four kind
 `preview_request.intent` may be `null` — "what does the world do if I do nothing?" — and `text` is
 free player speech, capped at 2000 characters. It reaches the game master as quoted data, never as
 instruction (ALE-33).
+
+`speculate` is a **hint, not a request**. It computes the same preview on the same cloned engine and
+files it under the same `(state hash, intent, text)` key a `preview_request` would look up, but it
+sends nothing back and stages nothing — a `go` after one still refuses, because nothing was staged.
+If the player then previews that intent for real, the answer is already in memory and arrives in
+about a tenth of a second instead of tens of seconds.
+
+It carries a non-null `intent` and no `text`: a speculation is about what is under the cursor, and
+there is no half-typed sentence to guess at.
+
+**Every one of these costs a model call.** The server therefore caps how many it will honour per
+player turn (`MAX_SPECULATIONS_PER_TURN`, 2; `GM_SPECULATE=off` disables it), refuses to run two at
+once, refuses one while a real phase is in flight, and charges nothing for an intent the engine
+refuses before the game master is asked. The client applies the same rules first and adds a dwell
+timer, but the client is a browser and the server does not trust it. Anything wrong with a
+`speculate` frame — stale turn, no budget left — is answered with **silence**: the player asked for
+nothing, so there is nothing to refuse them, and an `error` about where their pointer is resting
+would be noise on a screen that has real errors to show.
+
+A speculation the player contradicts is cancelled rather than waited out: previews are serialised,
+so a `preview_request` for a different key aborts the guess in the air instead of queueing the
+player behind it. One for the _same_ key is left alone — that is the case this exists for.
 
 `protocol` must equal `PROTOCOL_VERSION`; a mismatch is refused with an `error` and the socket does
 not join. A socket must `join` before it may send an `intent`.

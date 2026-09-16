@@ -748,7 +748,12 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       decisions: decisions.stats(),
       policies: { hits: policyHits, misses: policyMisses, size: policies.stats().size },
     }),
-    speculation: () => ({ ...speculation }),
+    speculation: () => {
+      // Rolled forward first, so `/healthz` reports the turn the room is actually on rather than
+      // the last one anybody hovered during.
+      budgetLeft();
+      return { ...speculation };
+    },
     meters: () => meters.summary(),
   };
 }
