@@ -84,7 +84,8 @@ test('play the M0 fixture by UI alone, then replay the recording', async ({ page
   // there is a model behind the server at all. There is none on this machine, and it says so.
   const panel = page.locator('#deliberate');
   await expect(page.locator('#deliberate-toggle')).toBeChecked();
-  await expect(panel).toContainText('the game master previews every click');
+  // No GM_SERVICE_URL on this machine, and the panel refuses to imply otherwise.
+  await expect(panel).toContainText('no game master is configured');
   await expect(panel).toContainText('GM_SERVICE_URL is unset');
   await expect(panel).toContainText('End turn has nothing to end');
   await expect(panel).toContainText('this turn: nothing taken yet');

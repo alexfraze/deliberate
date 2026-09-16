@@ -134,9 +134,12 @@ export type TurnSource =
 /** The mode line: what the *next* click will do, spelled out rather than implied by a checkbox. */
 export function describeMode(on: boolean, gm: GmAvailability | null): string {
   if (!on) return 'engine only — the game master is not consulted';
-  if (gmIsLive(gm)) return 'deliberate — the game master previews every click before it happens';
   if (gm === null) return 'deliberate — clicks are previewed before they happen';
-  return 'deliberate — but no game master is answering, so a preview is the engine’s own guess';
+  if (gmIsLive(gm)) return 'deliberate — the game master previews every click before it happens';
+  if (!gm.configured) {
+    return 'deliberate — but no game master is configured, so a preview is only the engine’s own resolution';
+  }
+  return 'deliberate — but the game master is not answering, so a preview is only the engine’s own resolution';
 }
 
 /** The availability line: is there a model behind this session at all, and which one. */

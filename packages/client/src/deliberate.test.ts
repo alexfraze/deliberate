@@ -83,10 +83,11 @@ describe('saying who ran the turn (ALE-39)', () => {
     expect(describeMode(true, live)).toContain('the game master previews every click');
   });
 
-  it('does not promise a game master that is configured but silent', () => {
+  it('does not promise a game master that is absent or silent', () => {
     expect(describeMode(true, { ...live, reachable: false })).toContain(
-      'no game master is answering',
+      'the game master is not answering',
     );
+    expect(describeMode(true, none)).toContain('no game master is configured');
     expect(describeMode(true, null)).not.toContain('game master previews');
   });
 

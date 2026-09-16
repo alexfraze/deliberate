@@ -99,6 +99,52 @@ describe('http', () => {
       turn: 0,
     });
   });
+
+  it('says on /healthz that no game master is configured, rather than staying silent', async () => {
+    // The whole of ALE-39: an engine-only session is legitimate, but it must be *askable*, or the
+    // client cannot tell it apart from a game master that answered instantly.
+    expect((await app.inject({ method: 'GET', url: '/healthz' })).json()).toMatchObject({
+      gm: { configured: false, reachable: false, model: null, narrateModel: null },
+    });
+  });
+
+  it('reports the models a configured game master runs', async () => {
+    const withGm = await buildApp({
+      scene: 'fixture',
+      gm: {
+        turn: () => Promise.reject(new Error('not called')),
+        health: () =>
+          Promise.resolve({
+            model: 'claude-opus-5',
+            narrateModel: 'claude-sonnet-5',
+            liveApi: true,
+          }),
+      },
+    });
+    expect((await withGm.inject({ method: 'GET', url: '/healthz' })).json()).toMatchObject({
+      gm: {
+        configured: true,
+        reachable: true,
+        model: 'claude-opus-5',
+        narrateModel: 'claude-sonnet-5',
+      },
+    });
+    await withGm.close();
+  });
+
+  it('does not claim a configured game master is reachable when it never answers', async () => {
+    const silent = await buildApp({
+      scene: 'fixture',
+      gm: {
+        turn: () => Promise.reject(new Error('not called')),
+        health: () => Promise.resolve(null),
+      },
+    });
+    expect((await silent.inject({ method: 'GET', url: '/healthz' })).json()).toMatchObject({
+      gm: { configured: true, reachable: false },
+    });
+    await silent.close();
+  });
 });
 
 describe('turn protocol over a websocket', () => {
