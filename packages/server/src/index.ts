@@ -69,6 +69,24 @@ const speculationsPerTurn =
 // game master takes inside it, so "two speculations" is not a sum of money; this is.
 const speculationUsdPerTurn = Number(process.env['GM_SPECULATE_USD'] ?? MAX_SPECULATION_USD);
 
+// The ambient world turn (ALE-41). Same shape as the speculation knobs above, and for the same
+// reason: this is the other feature that can spend money without the player clicking anything, so
+// turning it off must be a restart and not a code change. `GM_AMBIENT=0` (or `off`) stops the
+// world taking turns; `GM_AMBIENT_NOTICE_FT` and `GM_AMBIENT_IDLE_ROUNDS` tune how near the player
+// has to be to be noticed and how many quiet rounds count as a beat.
+const ambientEnv = process.env['GM_AMBIENT'];
+const ambient = {
+  ...(ambientEnv === undefined || ambientEnv === ''
+    ? {}
+    : { max: ambientEnv === 'off' ? 0 : Number(ambientEnv) || 0 }),
+  ...(process.env['GM_AMBIENT_NOTICE_FT']
+    ? { noticeFt: Number(process.env['GM_AMBIENT_NOTICE_FT']) }
+    : {}),
+  ...(process.env['GM_AMBIENT_IDLE_ROUNDS']
+    ? { idleRounds: Number(process.env['GM_AMBIENT_IDLE_ROUNDS']) }
+    : {}),
+};
+
 const app = await buildApp({
   logger: true,
   recordings,
@@ -79,6 +97,7 @@ const app = await buildApp({
   ...(Number.isFinite(cacheSize) ? { cacheSize } : {}),
   speculationsPerTurn,
   ...(Number.isFinite(speculationUsdPerTurn) ? { speculationUsdPerTurn } : {}),
+  ...(Object.keys(ambient).length > 0 ? { ambient } : {}),
   gm: gmUrl
     ? httpGmService({ baseUrl: gmUrl, timeoutMs: Math.max(...Object.values(budgets)) })
     : null,

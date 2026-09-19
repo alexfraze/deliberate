@@ -20,6 +20,7 @@ import {
 } from '@deliberate/protocol';
 
 import { parseClientFrame, toText } from './frames.js';
+import type { AmbientOptions } from './gm/ambient.js';
 import { createEngineRegistry } from './gm/engines.js';
 import { createGmLoop, type GmLoop } from './gm/loop.js';
 import type { GmHealth, GmService } from './gm/service.js';
@@ -110,6 +111,11 @@ export interface AppOptions {
   speculationsPerTurn?: number;
   /** Dollars of speculation per player turn (ALE-40). Defaults to `MAX_SPECULATION_USD`. */
   speculationUsdPerTurn?: number;
+  /**
+   * How the ambient world turn is tuned (ALE-41). `{ max: 0 }` is the kill switch; `src/index.ts`
+   * reads it from `GM_AMBIENT`, `GM_AMBIENT_NOTICE_FT` and `GM_AMBIENT_IDLE_ROUNDS`.
+   */
+  ambient?: AmbientOptions;
   room?: RoomId;
   /**
    * Directory for JSONL session recordings. `null` (the default) records nothing, which is what
@@ -181,6 +187,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     ...(opts.speculationUsdPerTurn === undefined
       ? {}
       : { speculationUsdPerTurn: opts.speculationUsdPerTurn }),
+    ...(opts.ambient === undefined ? {} : { ambient: opts.ambient }),
     log: (message) => app.log.warn(message),
     // One `meter` line per turn (ALE-24), so what a turn cost is re-readable from the recording
     // months later instead of trusted from whatever printed it at the time.
