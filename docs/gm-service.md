@@ -330,6 +330,38 @@ paying to write a program the first time an NPC acts bought nothing — whereas 
 gate every quiet minute of a session, so a third turn is not a guess. `AMBIENT_POLICY_TASK` in
 `prompt/turn.py` is the ambient wording, and it asks for a habit rather than a battle plan.
 
+### What the measurement showed
+
+One live playthrough against `claude-opus-5` in which the player never attacked anyone:
+`recordings/live/ambient-yard.jsonl`, six ambient turns, $0.87, committed. `resolve` is the phase
+the ambient NPC turn is metered in — the same phase a combat NPC turn uses, because it is the same
+turn.
+
+| turn | what happened                                                 | `resolve` | after GO | $           |
+| ---- | ------------------------------------------------------------- | --------- | -------- | ----------- |
+| 0    | wait — Ilva's first ambient turn; also writes her policy      | 55.3 s    | 61.9 s   | $0.2642     |
+| 1    | wait — **Ilva, from the policy she just wrote**               | **43 ms** | 4.6 s    | **$0.0149** |
+| 2    | wait — Halloran's first                                       | 30.1 s    | 34.0 s   | $0.1559     |
+| 3    | wait — Brannoc's first                                        | 25.0 s    | 29.9 s   | $0.1423     |
+| 4    | wait — Brannoc again; his disposition had crossed into `warm` | 29.1 s    | 34.4 s   | $0.1380     |
+| 5    | a move — **Ilva again, from her policy**                      | **44 ms** | 3.2 s    | $0.1543\*   |
+
+\* the preview of a move, which is an ordinary model call and not this feature; the ambient turn
+inside it cost 44 ms.
+
+**43 ms and 44 ms is ALE-37's 33 ms path, in live play, with a caller.** That is the number this
+feature exists to cash in, and the shape of the session is the argument: the first time an NPC
+idles it costs a model turn _plus_ the policy it writes, and every time after that it is free. A
+`pass_time` preview cost **1–2 ms and nothing**, because there is no model call in it at all.
+
+Turn 4 is worth reading twice: Brannoc's second idle turn was a policy _miss_, not a hit, because
+talking to him had moved his disposition from 20 to 26 and `policyKey`'s stance band flipped from
+`wary` to `warm`. That is the invalidation story working exactly as written — a person who has
+changed their mind about you gets a new program rather than the old one applied harder.
+
+For scale, the bank's combat baseline is `yard-brawl` at **$0.2086 a turn**, after-GO p50 8.0 s and
+p95 27.6 s.
+
 ### Why it does not feel random
 
 An NPC acting for no reason is worse than an NPC standing still, so the _reason_ is first class.
