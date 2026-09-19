@@ -193,11 +193,13 @@ describe('metering a turn through the loop', () => {
     expect(h.recorded).toHaveLength(1);
     const meter = h.recorded[0]!;
     expect(meter.turn).toBe(0);
-    // Preview and narrate each asked the game master once; nothing was cached.
-    expect(meter.calls).toBe(2);
+    // Preview, one ambient NPC turn and narrate. The middle one is the world's own turn (ALE-41):
+    // this hail happens in the gatehouse yard with no encounter running, so after GO commits the
+    // nearest NPC who has something to react to takes a turn. Nothing was cached.
+    expect(meter.calls).toBe(3);
     expect(meter.cacheHits).toBe(0);
-    expect(meter.usd).toBeCloseTo(2 * usdFor(tokensFrom(M1_USAGE)), 12);
-    expect(meter.tokens.cacheRead).toBe(2 * M1_USAGE.cache_read_input_tokens);
+    expect(meter.usd).toBeCloseTo(3 * usdFor(tokensFrom(M1_USAGE)), 12);
+    expect(meter.tokens.cacheRead).toBe(3 * M1_USAGE.cache_read_input_tokens);
     expect(meter.latencyMs.afterGo).toBe(
       meter.latencyMs.validate + meter.latencyMs.resolve + meter.latencyMs.narrate,
     );
@@ -215,9 +217,10 @@ describe('metering a turn through the loop', () => {
 
     const meter = h.recorded[0]!;
     expect(meter.cacheHits).toBe(1);
-    // Two previews plus narrate. The abandoned preview is on the bill: that money was spent.
-    expect(meter.calls).toBe(3);
-    expect(meter.usd).toBeCloseTo(3 * usdFor(tokensFrom(M1_USAGE)), 12);
+    // Two previews, the ambient world turn, and narrate. The abandoned preview is on the bill:
+    // that money was spent.
+    expect(meter.calls).toBe(4);
+    expect(meter.usd).toBeCloseTo(4 * usdFor(tokensFrom(M1_USAGE)), 12);
   });
 
   it('does not meter a GO the loop refused', async () => {

@@ -13,6 +13,12 @@ import {
 
 import type { Room, RoomSocket } from '../room.js';
 import {
+  ambientCandidates,
+  GM_BRAIN_POLICY,
+  type AmbientOptions,
+  type AmbientSense,
+} from './ambient.js';
+import {
   createTurnCache,
   decisionKey,
   policyKey,
@@ -105,8 +111,12 @@ export const MAX_SPECULATIONS_PER_TURN = 2;
  */
 export const MAX_SPECULATION_USD = 0.3;
 
-/** The GM's own brain policy. `content/npcs` stamps it on all three archetypes (ALE-16). */
-export const GM_BRAIN_POLICY = 'gm';
+/**
+ * The GM's own brain policy, re-exported from `ambient.ts` where it now lives: both "whose turn
+ * is it in initiative" and "who may stir when nobody is fighting" are questions about the same
+ * fact, and one copy of it is the only way they cannot disagree.
+ */
+export { GM_BRAIN_POLICY };
 
 /** The per-turn speculation budget as it stands. Reported on `/healthz` and asserted in tests. */
 export interface SpeculationStats {
@@ -121,6 +131,16 @@ export interface SpeculationStats {
   /** What those speculations actually cost this turn, and the ceiling that stops the next one. */
   usd: number;
   usdBudget: number;
+}
+
+/** What the world has done off its own bat this session. Reported on `/healthz`. */
+export interface AmbientStats {
+  /** Ambient turns offered — every GO committed outside an encounter. */
+  turns: number;
+  /** NPC turns actually taken in them. */
+  npcTurns: number;
+  /** Of those, the ones a saved policy took with no model call (ALE-37's 33 ms path). */
+  fromPolicy: number;
 }
 
 export interface PendingPreview {
@@ -145,6 +165,12 @@ export interface GmLoopOptions {
   maxNpcTurns?: number;
   /** Entries the preview and NPC-decision caches keep. 0 turns caching off entirely (ALE-22). */
   cacheSize?: number;
+  /**
+   * How the ambient world turn is tuned (ALE-41): how near the player has to be to be noticed,
+   * how many rounds of standing still count as a beat, and how many NPCs may act in one quiet
+   * turn. `ambient.max = 0` switches the feature off without a protocol change.
+   */
+  ambient?: AmbientOptions;
   /**
    * Speculative previews to pay for per player turn (ALE-40). `0` is the kill switch: the loop
    * still accepts `speculate` frames and still ignores them, so turning it off is a restart and
@@ -187,6 +213,8 @@ export interface GmLoop {
    * (ALE-37): a hit is an NPC turn a saved policy took with no model call.
    */
   cache(): { preview: CacheStats; decisions: CacheStats; policies: CacheStats };
+  /** Ambient world turns taken this session and how many of them the world answered (ALE-41). */
+  ambient(): AmbientStats;
   /** What the pointer has been allowed to spend this turn, and what it was refused (ALE-40). */
   speculation(): SpeculationStats;
   /** This session so far: p50/p95 after GO and cost per turn (ALE-24). */
@@ -225,6 +253,16 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
    * exactly what it cost before this feature existed.
    */
   const seenPolicyKeys = new Set<string>();
+  /**
+   * The reading each NPC last took an ambient turn on (ALE-41). This is the whole memory the
+   * ambient turn has, and it is what keeps it from being a random-number generator: an NPC acts
+   * when what it can perceive differs from what it perceived last time it acted, and otherwise
+   * stands still. Session state, not world state — nothing here is authoritative, and a replay
+   * never consults it, because what it decides is only *who is asked*, never what the world does.
+   */
+  const ambientSenses = new Map<EntityId, AmbientSense>();
+  const ambientOptions: AmbientOptions = options.ambient ?? {};
+  const ambientStats: AmbientStats = { turns: 0, npcTurns: 0, fromPolicy: 0 };
 
   let pending: PendingPreview | null = null;
   let memory: MemoryBlocks = options.memory ?? EMPTY_MEMORY;
@@ -266,6 +304,8 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       text: string | null;
       snapshot: Snapshot;
       acting?: EntityId | null;
+      /** Why this NPC is stirring, when it is stirring on its own (ALE-41). */
+      cue?: string | null;
       wantPolicy?: boolean;
     },
     budgetMs: number,
@@ -291,7 +331,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
           turn: room.turn(),
           phase,
           engine_token: body.engineToken,
-          state: stateSummary(body.snapshot, body.acting ?? null),
+          state: stateSummary(body.snapshot, body.acting ?? null, body.cue ?? null),
           entities: Object.keys(body.snapshot.entities),
           player_intent: body.intent,
           player_text: body.text,
@@ -398,6 +438,17 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
         diffs.push(...verdict.diff);
       }
 
+      // Waiting has nothing to telegraph (ALE-41). A preview exists to show the player what their
+      // action would do and what the world would do back; the answer to the first half is "a
+      // minute passes", and the second half is the ambient turn itself, which is the surprise the
+      // player is buying. Paying a model call to say "you wait" would cost more than everything
+      // that follows it. Free text is the exception — a player who *says* something while they
+      // wait has asked the game master a question, and that is a real preview.
+      if (intent?.kind === 'pass_time' && !text) {
+        meter().record(phase, { startedAt, endedAt: Date.now(), cached: true });
+        return { text: QUIET_PREVIEW, diffs, calls: [] };
+      }
+
       const answer = await ask(
         'preview',
         {
@@ -493,7 +544,17 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     meter().record('validate', { startedAt, endedAt: Date.now() });
 
     await resolve();
-    await narrate(staged);
+    // Outside an encounter, this is where the world gets its turn (ALE-41). `ambient` is a no-op
+    // while initiative is running, so on a combat turn the next two lines cost nothing.
+    const fighting = room.engine.snapshot().initiative !== null;
+    const stirred = await ambient();
+    // The one case where both halves run on one GO, and it is the case worth having: an ambient
+    // NPC who drew a weapon. `applyAttack` starts an encounter on the first attack whoever throws
+    // it, so a provoked guard opens initiative himself — no new code, and no second way in.
+    if (!fighting && room.engine.snapshot().initiative) await resolve();
+    // A wait in which nothing stirred has nothing to narrate, and a model call to say so would
+    // cost more than the whole turn did. Every other turn narrates as it always has.
+    if (staged.intent?.kind !== 'pass_time' || stirred > 0) await narrate(staged);
     // The turn is over and idle: what it cost is settled, and goes to the recording (ALE-24).
     onMeter(meter().finish());
     turnMeter = null;
@@ -523,6 +584,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     snapshot: Snapshot,
     acting: EntityId,
     startedAt: number,
+    cue: string | null,
   ): Promise<boolean> => {
     if (!caching || !gm?.policy) return false;
     const key = policyKey(snapshot, acting);
@@ -539,7 +601,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
           session: room.id,
           turn: room.turn(),
           engine_token: LIVE_ENGINE_TOKEN,
-          state: stateSummary(snapshot, acting),
+          state: stateSummary(snapshot, acting, cue),
           acting,
           code: program.code,
         },
@@ -564,55 +626,133 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     return true;
   };
 
+  /**
+   * One NPC turn, wherever it came from: initiative, or the world moving on its own (ALE-41).
+   *
+   * The three-step ladder is the same either way — the exact-world decision cache, then a policy
+   * the game master wrote earlier, then the model — because an ambient turn is an NPC turn. What
+   * `phase` changes is the task line the service puts in front of the model, and what `cue`
+   * changes is whether the model is told why this NPC is stirring at all.
+   *
+   * Returns whether anything landed. A turn that landed nothing is not "the world acted".
+   */
+  const npcTurn = async (
+    snapshot: Snapshot,
+    acting: EntityId,
+    phase: 'resolve' | 'ambient',
+    cue: string | null,
+  ): Promise<boolean> => {
+    // The same world and the same NPC is the same question, so the answer is memoised (ALE-22).
+    // What comes back is the *plan* — the mutations the game master asked for — and it is replayed
+    // through the very same `/gm/tool` door, so the engine validates every call and rolls its own
+    // dice afresh. A cached decision can therefore fail where the first one succeeded, which is
+    // correct: the cache remembers what an NPC decided to try, never what the world let it do.
+    const startedAt = Date.now();
+    const key = decisionKey(room.engine.hash(), acting);
+    const hit = caching ? decisions.get(key) : undefined;
+    if (hit) {
+      let landed = false;
+      for (const call of hit) {
+        if (!replayCall(call)) break;
+        landed = true;
+      }
+      meter().record('resolve', { startedAt, endedAt: Date.now(), cached: true });
+      return landed;
+    }
+    if (await runPolicy(snapshot, acting, startedAt, cue)) {
+      if (phase === 'ambient') ambientStats.fromPolicy += 1;
+      return true;
+    }
+
+    // Neither cache could take the turn, so the model does. Whether it is also asked to write the
+    // policy down depends on how likely this situation is to come round again.
+    const skill = policyKey(snapshot, acting);
+    // In a fight, that is the *second* sighting: writing a program costs real seconds on top of
+    // taking the turn, and a real ten-turn combat session reached `resolve` exactly once, so
+    // paying it the first time buys nothing. Ambient behaviour is the opposite case and it is why
+    // ALE-37 was built: a guard watches a gate every quiet minute of the session, so the third
+    // turn is not a guess. Asking on the first sighting pays the writing cost once instead of
+    // paying a full model turn and *then* the writing cost.
+    const wantPolicy = caching && (phase === 'ambient' || seenPolicyKeys.has(skill));
+    seenPolicyKeys.add(skill);
+    const answer = await ask(
+      phase,
+      {
+        engineToken: LIVE_ENGINE_TOKEN,
+        intent: null,
+        text: null,
+        snapshot,
+        acting,
+        cue,
+        wantPolicy,
+      },
+      resolveBudget,
+    );
+    if (caching && !answer.failed) decisions.set(key, answer.calls);
+    // Keyed on the world the policy was *written for*, not the one it leaves behind: the NPC has
+    // just acted, so `room.engine.snapshot()` is already a turn out of date for it.
+    if (caching && answer.policy) policies.set(skill, answer.policy);
+    meter().record('resolve', {
+      startedAt,
+      endedAt: Date.now(),
+      usage: answer.usage,
+      failed: answer.failed,
+    });
+    return answer.calls.length > 0;
+  };
+
+  // -------------------------------------------------------------------------------------------
+  // Ambient — the world's turn, when nobody is fighting (ALE-41)
+  // -------------------------------------------------------------------------------------------
+
+  /**
+   * The world gets a turn. Runs after every GO committed outside an encounter, so it is not only
+   * the `pass_time` verb that wakes the world: walking up to the gate is itself a thing the guard
+   * can notice, and the reaction lands on the same turn that caused it.
+   *
+   * What makes this affordable is that **most ambient turns cost nothing at all.** `ambientCandidates`
+   * is a pure read of the snapshot, and it returns nobody unless an NPC's reading of the world has
+   * changed since the last turn it took — so a player crossing empty ground pays for an ambient
+   * turn in microseconds, and only a player who did something perceptible pays for a model call.
+   * Of the ones that do cost, the second and every one after it should be ALE-37's 33 ms path,
+   * because "a merchant idles at a stall" is exactly the repetitive, undramatic behaviour a cached
+   * policy is for.
+   *
+   * Returns how many NPCs actually did something.
+   */
+  const ambient = async (): Promise<number> => {
+    if (!gm) return 0;
+    // An encounter has its own answer to "whose turn is it", and it is initiative's.
+    if (room.engine.snapshot().initiative) return 0;
+    ambientStats.turns += 1;
+    let stirred = 0;
+    for (const candidate of ambientCandidates(
+      room.engine.snapshot(),
+      ambientSenses,
+      ambientOptions,
+    )) {
+      // An earlier ambient NPC may have drawn on someone and opened an encounter. From that
+      // moment this is initiative's business, and `resolve` picks it up.
+      if (room.engine.snapshot().initiative) break;
+      // Recorded before the turn, not after: the NPC has now reacted to *this* reading, whatever
+      // it chooses to do about it, and reacting twice to one change is the thing to avoid. An NPC
+      // crowded out by a nearer neighbour keeps its old reading and stays a candidate next turn.
+      ambientSenses.set(candidate.entity, candidate.sense);
+      ambientStats.npcTurns += 1;
+      if (await npcTurn(room.engine.snapshot(), candidate.entity, 'ambient', candidate.reason)) {
+        stirred += 1;
+      }
+    }
+    return stirred;
+  };
+
   const resolve = async (): Promise<void> => {
     for (let i = 0; i < maxNpcTurns; i++) {
       const snapshot = room.engine.snapshot();
       const acting = gmActor(snapshot);
       if (!acting) return;
 
-      if (gm) {
-        // The same world and the same NPC is the same question, so the answer is memoised too
-        // (ALE-22). What comes back is the *plan* — the mutations the game master asked for — and
-        // it is replayed through the very same `/gm/tool` door, so the engine validates every call
-        // and rolls its own dice afresh. A cached decision can therefore fail where the first one
-        // succeeded, which is correct: the cache remembers what an NPC decided to try, never what
-        // the world let it do.
-        const startedAt = Date.now();
-        const key = decisionKey(room.engine.hash(), acting);
-        const hit = caching ? decisions.get(key) : undefined;
-        if (hit) {
-          for (const call of hit) if (!replayCall(call)) break;
-          meter().record('resolve', { startedAt, endedAt: Date.now(), cached: true });
-        } else if (!(await runPolicy(snapshot, acting, startedAt))) {
-          // Neither cache could take the turn, so the model does. Whether it is also asked to
-          // write down how depends on whether this situation has come round before.
-          const skill = policyKey(snapshot, acting);
-          const wantPolicy = caching && seenPolicyKeys.has(skill);
-          seenPolicyKeys.add(skill);
-          const answer = await ask(
-            'resolve',
-            {
-              engineToken: LIVE_ENGINE_TOKEN,
-              intent: null,
-              text: null,
-              snapshot,
-              acting,
-              wantPolicy,
-            },
-            resolveBudget,
-          );
-          if (caching && !answer.failed) decisions.set(key, answer.calls);
-          // Keyed on the world the policy was *written for*, not the one it leaves behind: the
-          // NPC has just acted, so `room.engine.snapshot()` is already a turn out of date for it.
-          if (caching && answer.policy) policies.set(skill, answer.policy);
-          meter().record('resolve', {
-            startedAt,
-            endedAt: Date.now(),
-            usage: answer.usage,
-            failed: answer.failed,
-          });
-        }
-      }
+      if (gm) await npcTurn(snapshot, acting, 'resolve', null);
 
       const after = room.engine.snapshot();
       if (gmActor(after) !== acting) continue;
@@ -787,6 +927,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       decisions: decisions.stats(),
       policies: { hits: policyHits, misses: policyMisses, size: policies.stats().size },
     }),
+    ambient: () => ({ ...ambientStats }),
     speculation: () => {
       // Rolled forward first, so `/healthz` reports the turn the room is actually on rather than
       // the last one anybody hovered during.
@@ -817,9 +958,19 @@ export function gmActor(snapshot: Snapshot): EntityId | null {
  * it is the orientation the GM needs before it starts asking questions, and `get_state` answers
  * from the engine for anything more. Small on purpose — it is measured against the 12k budget.
  */
-export function stateSummary(snapshot: Snapshot, acting: EntityId | null): Record<string, unknown> {
+export function stateSummary(
+  snapshot: Snapshot,
+  acting: EntityId | null,
+  /**
+   * Why `acting` is stirring, when it is stirring on its own rather than because initiative said
+   * so (ALE-41). It is the difference between "an NPC acted" and "an NPC acted *because* the
+   * player walked up to it", and the game master cannot narrate the second without being told.
+   */
+  cue: string | null = null,
+): Record<string, unknown> {
   return {
     acting,
+    ...(cue ? { cue } : {}),
     clock: snapshot.world.clock,
     flags: snapshot.world.flags,
     quests: Object.values(snapshot.world.quests).map((q) => ({
@@ -844,6 +995,12 @@ export function stateSummary(snapshot: Snapshot, acting: EntityId | null): Recor
     })),
   };
 }
+
+/**
+ * What a `pass_time` preview says. Fixed prose rather than a model call: see `computePreview`.
+ */
+const QUIET_PREVIEW =
+  'You hold where you are and let a little time go by. What the world does with it is the world\u2019s business.';
 
 function fallbackPreviewText(intent: Intent | null, failed: string | null): string {
   const what = intent ? `${intent.kind} is legal from here.` : 'Nothing is staged.';

@@ -15,7 +15,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-Phase = Literal["preview", "resolve", "narrate"]
+#: ``ambient`` is ALE-41's addition: the world's own turn, outside any encounter. It is a phase
+#: rather than a flag on ``resolve`` because the only thing a phase does here is choose a task
+#: line, and ``resolve``'s opens "Initiative is running" -- which on an ambient turn is false.
+Phase = Literal["preview", "resolve", "ambient", "narrate"]
 
 
 class LedgerEntry(BaseModel):

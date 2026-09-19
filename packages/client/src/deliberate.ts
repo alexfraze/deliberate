@@ -82,6 +82,8 @@ export function describeStaged(intent: Intent | null, nameOf: (id: EntityId) => 
       return `${nameOf(intent.attacker)} attacks ${nameOf(intent.target)} with ${intent.ability}`;
     case 'end_turn':
       return `${nameOf(intent.entity)} ends their turn`;
+    case 'pass_time':
+      return `${nameOf(intent.entity)} waits, and the world gets a turn`;
     default:
       return intent.kind;
   }
@@ -176,11 +178,12 @@ export function describeTurnSource(source: TurnSource, gm: GmAvailability | null
 }
 
 /**
- * Initiative only exists inside an encounter, so outside one "End turn" has nothing to end and
- * the NPCs never act. That was invisible; it is a sentence now.
+ * Initiative only exists inside an encounter, so outside one "End turn" has nothing to end. Wait
+ * is the verb for that half of the game (ALE-41): it spends a little time and hands the moment to
+ * the world, and the NPCs near enough to have noticed anything take a turn.
  */
 export function describeEncounter(active: boolean): string {
   return active
     ? 'in an encounter — End turn hands initiative to the NPCs'
-    : 'no encounter — there is no initiative, so End turn has nothing to end and the world does not act';
+    : 'no encounter — End turn has nothing to end here; Wait lets time pass and the world act';
 }

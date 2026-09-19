@@ -8,6 +8,7 @@ import {
   type InitiativeState,
   type Intent,
   type MoveIntent,
+  type PassTimeIntent,
   type Snapshot,
   type Tile,
   type Verdict,
@@ -55,6 +56,9 @@ import { inRange, WEAPON_ACTION, type AttackAction, type Weapon } from './weapon
  *   first in round 1 (the ambush). From then on only the entity at `initiative.current` may act,
  *   with one move (speed in feet, spendable in pieces), one action, and one bonus action per
  *   turn; `end_turn` advances, skipping the dead and (in M0) anyone without a `player` brain.
+ * - Outside an encounter the player may instead `pass_time`: the world clock moves on by a round
+ *   and nothing else in the store changes. It is the hook the server hangs the ambient world turn
+ *   on (ALE-41), and the engine deliberately knows nothing about that — here it is just a clock.
  * - Rejections never mutate and carry a reason a player can read.
  */
 export function createEngine(initial: Snapshot, options: EngineOptions): Engine {
@@ -74,6 +78,8 @@ export function createEngine(initial: Snapshot, options: EngineOptions): Engine 
           return applyAttack(ctx, intent);
         case 'end_turn':
           return applyEndTurn(ctx, intent);
+        case 'pass_time':
+          return applyPassTime(ctx, intent);
         case 'cast':
           return applyCast(ctx, intent);
         case 'say':
@@ -366,4 +372,38 @@ function applyEndTurn(ctx: EngineContext, intent: EndTurnIntent): Verdict {
   return accept([
     { type: 'TurnAdvanced', initiative: structuredClone(next.state), clock: ctx.store.clock() },
   ]);
+}
+
+// ---------------------------------------------------------------------------------------------
+// pass_time — the player waits, and the clock moves (ALE-41)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Validate a wait. Reads only. The mirror image of `checkEndTurn`: that one needs an encounter
+ * and this one needs there not to be, so between them every moment in the world has exactly one
+ * legal way to give the turn back, and neither ever had to change what the other says.
+ */
+export function checkPassTime(store: Store, intent: PassTimeIntent): Actor | Verdict {
+  const actor = checkActor(store, intent.entity, 'wait');
+  if (isVerdict(actor)) return actor;
+  if (store.initiative()) {
+    return reject(`An encounter is running; ${actor.entity.name} must end their turn instead.`);
+  }
+  return actor;
+}
+
+/**
+ * One round of time passes. The only mutation is the clock — no initiative is started, no economy
+ * is spent, nobody moves — so the diff is the `TurnAdvanced` the clock already travels in, with a
+ * null initiative saying in so many words that this was not a turn in a fight.
+ *
+ * The clock is inside the state hash, so two waits in a row are two different worlds. That is what
+ * stops the preview cache from answering the second one with the first one's answer, and what lets
+ * an NPC notice that the player has been standing there a while.
+ */
+function applyPassTime(ctx: EngineContext, intent: PassTimeIntent): Verdict {
+  const actor = checkPassTime(ctx.store, intent);
+  if (isVerdict(actor)) return actor;
+  ctx.store.setClock(ctx.store.clock() + 1);
+  return accept([{ type: 'TurnAdvanced', initiative: null, clock: ctx.store.clock() }]);
 }
