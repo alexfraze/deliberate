@@ -517,14 +517,11 @@ panel.onSpeak(() => {
   askingServer();
   transport.send({ type: 'preview_request', room: DEFAULT_ROOM, turn, intent: null, text });
 });
-panel.onEndTurn(() => {
-  if (selected === null) {
-    hud.setHint('Select an entity first, then end its turn.');
-    return;
-  }
-  // Same path as any other intent: previewed in deliberate mode, committed otherwise. Whether
-  // this entity may end its turn is the engine's call, and its reason lands in the HUD.
-  const intent: Intent = { kind: 'end_turn', entity: selected };
+/**
+ * Send a button-composed intent: previewed in deliberate mode, committed otherwise. Whether the
+ * entity may do it is the engine's call, and its reason lands in the HUD.
+ */
+const sendButtonIntent = (intent: Intent): void => {
   hud.setError(null);
   if (panel.isOn()) {
     panel.stage(intent);
@@ -542,6 +539,23 @@ panel.onEndTurn(() => {
     panel.noteTurn('engine');
     panel.busy('resolving the turn', 15000);
   }
+};
+
+panel.onEndTurn(() => {
+  if (selected === null) {
+    hud.setHint('Select an entity first, then end its turn.');
+    return;
+  }
+  sendButtonIntent({ kind: 'end_turn', entity: selected });
+});
+panel.onWait(() => {
+  if (selected === null) {
+    hud.setHint('Select an entity first, then let time pass for it.');
+    return;
+  }
+  // The out-of-combat verb (ALE-41): the clock moves on and the server gives the world a turn.
+  // Legality is the engine's — inside an encounter it says to end the turn instead.
+  sendButtonIntent({ kind: 'pass_time', entity: selected });
 });
 
 window.addEventListener('beforeunload', () => transport.close());

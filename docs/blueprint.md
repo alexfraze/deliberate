@@ -23,13 +23,14 @@ the story, the NPCs, and the consequences.
 
 ## Turn loop
 
-| Phase      | Owner               | What happens                                                                                 | MVP budget |
-| ---------- | ------------------- | -------------------------------------------------------------------------------------------- | ---------- |
-| Deliberate | Player              | Pick an intent: move, ability, dialogue, or free text. Nothing committed.                    | unbounded  |
-| Preview    | GM                  | Proposes the likely resolution and telegraphs NPC reactions. Cached by (state hash, intent). | ≤ 8 s      |
-| GO         | Player              | Commit. Engine validates every proposed call and applies the diff.                           | < 100 ms   |
-| Resolve    | Engine + NPC brains | Initiative runs. NPCs act through policies; GM consulted only when asked.                    | ≤ 6 s      |
-| Narrate    | GM                  | Streamed prose and dialogue for what the engine did; optional async cinematics.              | 1–3 s      |
+| Phase      | Owner               | What happens                                                                                  | MVP budget |
+| ---------- | ------------------- | --------------------------------------------------------------------------------------------- | ---------- |
+| Deliberate | Player              | Pick an intent: move, ability, dialogue, or free text. Nothing committed.                     | unbounded  |
+| Preview    | GM                  | Proposes the likely resolution and telegraphs NPC reactions. Cached by (state hash, intent).  | ≤ 8 s      |
+| GO         | Player              | Commit. Engine validates every proposed call and applies the diff.                            | < 100 ms   |
+| Resolve    | Engine + NPC brains | Initiative runs. NPCs act through policies; GM consulted only when asked.                     | ≤ 6 s      |
+| Ambient    | Engine + NPC brains | Outside an encounter, the world takes a turn: one NPC acts, if it noticed something (ALE-41). | ~0 s       |
+| Narrate    | GM                  | Streamed prose and dialogue for what the engine did; optional async cinematics.               | 1–3 s      |
 
 Targets: after-GO p50 10 s (MVP) → 3 s (final); GM input ≤ 12k tokens/turn → ≤ 8k with ledger
 compaction; cost $0.03–0.10/turn → < $0.005 on local serving.
@@ -54,7 +55,8 @@ Query tools (free): `get_state(scope)`, `legal_actions(entity_id)`, `line_of_sig
 Mutation tools (validated): `move(entity_id, to)`, `attack(attacker, target, ability)`,
 `cast(entity_id, spell, target)`, `say(npc_id, text, to)`, `set_disposition(npc_id, delta, reason)`,
 `spawn(template_id, at)`, `set_flag(key, value)`, `advance_quest(quest_id, step)`,
-`end_turn(entity_id)`.
+`end_turn(entity_id)`. `pass_time` (ALE-41) is deliberately **not** here: waiting is a player's
+decision, and the game master has no way to skip the world's own time.
 
 Each mutation returns `{ok, reason, diff}`. Batches stop at the first rejection.
 

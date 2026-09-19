@@ -43,8 +43,12 @@ function isTile(value: unknown): value is Tile {
  * nothing a person at a keyboard should be able to send. The engine validates that a `spawn` names
  * a real template; it has no concept of who asked. So the wire stops here, and those four reach the
  * engine only through `POST /gm/tool`. `cast` and `say` are player actions and are accepted.
+ *
+ * ALE-41 added `pass_time`, and it belongs on this side of the line for the same reason: it is the
+ * player deciding to spend a moment. It is deliberately *not* a game master tool, so the world
+ * cannot skip its own time — only a person can.
  */
-const PLAYER_INTENTS = 'move, attack, cast, say, end_turn';
+const PLAYER_INTENTS = 'move, attack, cast, say, end_turn, pass_time';
 
 export function isIntent(value: unknown): value is Intent {
   if (!isRecord(value)) return false;
@@ -54,6 +58,7 @@ export function isIntent(value: unknown): value is Intent {
     case 'attack':
       return isId(value['attacker']) && isId(value['target']) && isId(value['ability']);
     case 'end_turn':
+    case 'pass_time':
       return isId(value['entity']);
     case 'cast':
       return isId(value['caster']) && isId(value['spell']) && isId(value['target']);

@@ -50,6 +50,12 @@ export interface DeliberatePanel {
    * hands initiative to the NPCs, and the engine — not the client — decides whether it is legal.
    */
   onEndTurn(handler: () => void): void;
+  /**
+   * Wait: let a little time pass and give the world a turn (ALE-41). The out-of-combat companion
+   * to End turn — outside an encounter there is no turn to end, but there is time to spend — and
+   * like it, always available, because legality is the engine's call and not the client's.
+   */
+  onWait(handler: () => void): void;
   /** What the player typed, trimmed. Empty string when they typed nothing. */
   text(): string;
   /** Clear the text box — after a turn commits, so speech is not accidentally repeated. */
@@ -130,6 +136,13 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   endTurn.type = 'button';
   endTurn.textContent = 'End turn';
 
+  // The same, for the other half of the game. Outside an encounter End turn has nothing to end;
+  // Wait is what hands the moment to the world instead.
+  const wait = document.createElement('button');
+  wait.id = 'wait';
+  wait.type = 'button';
+  wait.textContent = 'Wait';
+
   root.append(
     label,
     mode,
@@ -142,6 +155,7 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     reactions,
     go,
     endTurn,
+    wait,
     encounter,
     provenance,
     narration,
@@ -208,6 +222,8 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   go.addEventListener('click', () => goHandler?.());
   let endTurnHandler: (() => void) | null = null;
   endTurn.addEventListener('click', () => endTurnHandler?.());
+  let waitHandler: (() => void) | null = null;
+  wait.addEventListener('click', () => waitHandler?.());
   let speakHandler: (() => void) | null = null;
   say.addEventListener('click', () => speakHandler?.());
   speech.addEventListener('keydown', (event) => {
@@ -312,6 +328,9 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     },
     onEndTurn(handler) {
       endTurnHandler = handler;
+    },
+    onWait(handler) {
+      waitHandler = handler;
     },
     text() {
       return speech.value.trim();

@@ -90,6 +90,13 @@ test('play the M0 fixture by UI alone, then replay the recording', async ({ page
   await expect(panel).toContainText('End turn has nothing to end');
   await expect(panel).toContainText('this turn: nothing taken yet');
 
+  // --- the world is not frozen out of combat (ALE-41) ------------------------------------------
+  // Out of combat "End turn" has nothing to end; "Wait" is the verb that does. There is no game
+  // master on this machine, so nothing stirs — but the clock moves, which is the engine half of
+  // the feature going through the real UI, the real wire and the real engine.
+  await expect(page.locator('#wait')).toBeVisible();
+  await expect(panel).toContainText('Wait lets time pass and the world act');
+
   // The M0 path below is the engine-only one, which is now an explicit choice.
   await page.locator('#deliberate-toggle').uncheck();
   await expect(panel).toContainText('engine only — the game master is not consulted');
@@ -97,6 +104,14 @@ test('play the M0 fixture by UI alone, then replay the recording', async ({ page
   // --- select the player -----------------------------------------------------------------------
   await clickAt(page, await screenOfEntity(page, PLAYER));
   await expect(hud(page)).toContainText('Player (party) · 12/12 hp · (2, 2)');
+
+  // Wait: accepted out of combat, where End turn is refused. Both go through the engine, and it is
+  // the engine that decides — the client never disables either.
+  await page.locator('#wait').click();
+  await settle(page);
+  await expect(hud(page)).not.toContainText('there is no turn to end');
+  await page.locator('#end-turn').click();
+  await expect(hud(page)).toContainText('No encounter is running; there is no turn to end.');
 
   // --- an illegal move is refused, with a reason on screen --------------------------------------
   // (3, 4) is a pillar. The engine is the only thing that decides this; the client just asks.

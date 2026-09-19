@@ -184,9 +184,11 @@
         color: var(--dl-text-muted, #8496a8);
         cursor: default;
       }
-      /* Always visible: ending a turn is how initiative reaches the NPCs, and it is not part of
-         the deliberate/preview cycle, so it is not hidden with the rest of the panel. */
-      #deliberate #end-turn {
+      /* Always visible: ending a turn is how initiative reaches the NPCs, and Wait is the same
+         move outside an encounter — neither is part of the deliberate/preview cycle, so neither
+         is hidden with the rest of the panel. */
+      #deliberate #end-turn,
+      #deliberate #wait {
         flex: none;
         margin-top: 8px;
         width: 100%;
@@ -198,7 +200,11 @@
         border-radius: 6px;
         cursor: pointer;
       }
-      #deliberate #end-turn:hover {
+      #deliberate #wait {
+        margin-top: 4px;
+      }
+      #deliberate #end-turn:hover,
+      #deliberate #wait:hover {
         border-color: var(--dl-accent, #9fd0ff);
         color: var(--dl-text, #e8eef4);
       }

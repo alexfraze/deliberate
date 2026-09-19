@@ -133,3 +133,54 @@ describe('toText', () => {
     expect(toText(new TextEncoder().encode('hi').buffer)).toBe('hi');
   });
 });
+
+describe('pass_time on the wire (ALE-41)', () => {
+  it('is a player intent, so a Wait button can send one', () => {
+    const result = parseClientFrame(
+      JSON.stringify({
+        type: 'preview_request',
+        room: 'main',
+        turn: 0,
+        intent: { kind: 'pass_time', entity: 'player' },
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('still needs somebody to be doing the waiting', () => {
+    const result = parseClientFrame(
+      JSON.stringify({
+        type: 'intent',
+        room: 'main',
+        turn: 0,
+        intent: { kind: 'pass_time' },
+      }),
+    );
+    expect(result).toMatchObject({ ok: false });
+  });
+
+  /**
+   * The four world-authoring kinds are the game master's alone, and adding a player verb must not
+   * quietly open that door. Found by playing: every unit test above this one hands the room an
+   * already-parsed message, so the wire's own allowlist was the one thing they could not check.
+   */
+  it('does not let a new player verb reopen the world-authoring kinds', () => {
+    for (const intent of [
+      { kind: 'spawn', template: 'guard', at: { x: 1, y: 1 }, map: null, id: null },
+      { kind: 'set_flag', key: 'gatehouse.gate.sealed', value: false },
+      { kind: 'advance_quest', quest: 'carry-the-scout', step: 2 },
+      {
+        kind: 'set_disposition',
+        entity: 'gate-guard-halloran',
+        toward: 'player',
+        delta: 50,
+        reason: 'x',
+      },
+    ]) {
+      const result = parseClientFrame(
+        JSON.stringify({ type: 'intent', room: 'main', turn: 0, intent }),
+      );
+      expect(result, intent.kind).toMatchObject({ ok: false });
+    }
+  });
+});

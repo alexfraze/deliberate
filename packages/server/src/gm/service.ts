@@ -14,7 +14,14 @@ import type { Diff, EntityId, Intent } from '@deliberate/protocol';
  * contract that lives in Python, and it would drift.
  */
 
-export type GmPhase = 'preview' | 'resolve' | 'narrate';
+/**
+ * `ambient` is additive (ALE-41): the world's own turn, outside any encounter. It exists as a
+ * phase rather than as a flag on `resolve` because the only thing the service does with a phase is
+ * choose a task line, and `resolve`'s begins "Initiative is running" — which, on an ambient turn,
+ * is simply false. A service that predates it answers an `ambient` request as a `preview`, which
+ * is wrong but harmless: the engine validates every call either way.
+ */
+export type GmPhase = 'preview' | 'resolve' | 'ambient' | 'narrate';
 
 /** Whatever `MemoryBlocks` the GM service returned last turn. Node persists it and replays it. */
 export type MemoryBlocks = Record<string, unknown>;

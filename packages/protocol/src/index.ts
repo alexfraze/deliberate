@@ -437,16 +437,40 @@ export interface AdvanceQuestIntent {
 }
 
 /**
+ * The player waits, and the world gets a turn (ALE-41).
+ *
+ * Deliberately **not** `end_turn` with the encounter check relaxed. Outside an encounter
+ * `end_turn` is refused with "No encounter is running; there is no turn to end", and four
+ * recorded turns in the regression bank are recordings of exactly that refusal. Making it legal
+ * would rewrite their outcomes and quietly invalidate 316 turns of determinism evidence, so this
+ * is a new verb rather than a new meaning for an old one: every existing verdict is byte for byte
+ * what it was.
+ *
+ * In the engine it does one small, honest thing — it moves the world clock on by a round, the
+ * same unit initiative already counts in. Everything that makes the world feel alive happens
+ * *after* it, in the server's ambient turn, through ordinary validated intents.
+ *
+ * It is a player verb and not a GM tool. `contracts/gm-tools.json` is untouched, so the game
+ * master has no way to skip time on its own: only a player can decide to spend some.
+ */
+export interface PassTimeIntent {
+  kind: 'pass_time';
+  /** Who is waiting. Validated like any other actor: a corpse cannot bide its time. */
+  entity: EntityId;
+}
+
+/**
  * Everything the engine can be asked to do. M0 shipped `move`, `attack` and `end_turn`; ALE-31
- * added the rest for the GM's mutation tools. The addition is additive: each new kind is a new
- * member of the union, no existing member changed, and every GM mutation tool maps onto exactly
- * one of these — a tool call is not a second way into the store, it is the same validated path
- * the player's UI uses.
+ * added the rest for the GM's mutation tools, and ALE-41 added `pass_time`. The addition is
+ * additive: each new kind is a new member of the union, no existing member changed, and every GM
+ * mutation tool maps onto exactly one of these — a tool call is not a second way into the store,
+ * it is the same validated path the player's UI uses.
  */
 export type Intent =
   | MoveIntent
   | AttackIntent
   | EndTurnIntent
+  | PassTimeIntent
   | CastIntent
   | SayIntent
   | SetDispositionIntent
