@@ -27,13 +27,7 @@ import {
 import { createGrade } from './grade.js';
 import { ZOOM_STEP, cellAt, clampZoom } from './grid.js';
 import { createHud, type FloatingNumber } from './hud.js';
-import {
-  cssVariables,
-  otherTheme,
-  paletteFor,
-  resolveTheme,
-  type ThemeName,
-} from './palette.js';
+import { cssVariables, otherTheme, paletteFor, resolveTheme, type ThemeName } from './palette.js';
 import { initiativeView } from './initiative.js';
 import { createDeliberatePanel } from './panel.js';
 import { createRenderer } from './renderer.js';

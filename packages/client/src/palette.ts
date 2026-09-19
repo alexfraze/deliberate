@@ -97,7 +97,7 @@ const DARK: Palette = {
   floor: '#2f6d68',
   floorAlt: '#286059',
   floorHigh: '#84cba6',
-  wall: '#4b5d75',
+  wall: '#66809f',
 
   key: '#fff1d9',
   sky: '#9dc4e8',
@@ -145,7 +145,7 @@ const LIGHT: Palette = {
   floor: '#74bfae',
   floorAlt: '#66b3a2',
   floorHigh: '#d8ecca',
-  wall: '#8fa1b4',
+  wall: '#8091a6',
 
   key: '#fffaf0',
   sky: '#dceaf6',

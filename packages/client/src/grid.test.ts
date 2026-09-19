@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { fixtureMap, parseMapRows } from './fixtures/index.js';
 import {
   ELEVATION_STEP,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  ZOOM_STEP,
   cellAt,
+  clampZoom,
   elevationAt,
   inBounds,
   isWalkable,
@@ -17,6 +21,13 @@ import {
 } from './grid.js';
 
 const map = fixtureMap();
+
+/** A bare walkable square, for the camera-maths tests that only care about extents. */
+const squareMap = (size: number): ReturnType<typeof parseMapRows> =>
+  parseMapRows(
+    'square',
+    Array.from({ length: size }, () => '.'.repeat(size)),
+  );
 
 describe('cell lookup', () => {
   it('reads the row-major grid', () => {
@@ -145,5 +156,53 @@ describe('parseMapRows', () => {
 
   it('rejects an unknown glyph', () => {
     expect(() => parseMapRows('bad', ['?'])).toThrow(/unknown glyph/);
+  });
+});
+
+describe('clampZoom', () => {
+  it('keeps the wheel inside the rig’s limits', () => {
+    expect(clampZoom(1)).toBe(1);
+    expect(clampZoom(0)).toBe(ZOOM_MIN);
+    expect(clampZoom(-5)).toBe(ZOOM_MIN);
+    expect(clampZoom(1000)).toBe(ZOOM_MAX);
+  });
+
+  it('survives a non-finite zoom rather than blanking the frustum', () => {
+    // `zoom * step` can reach Infinity or NaN after enough wheel events; an orthographic camera
+    // with a NaN half-width renders nothing at all, which looks exactly like a crash.
+    expect(clampZoom(Number.NaN)).toBe(1);
+    expect(clampZoom(Number.POSITIVE_INFINITY)).toBe(1);
+  });
+
+  it('is closed under the wheel step, from either end', () => {
+    let zoom = ZOOM_MIN;
+    for (let i = 0; i < 100; i += 1) zoom = clampZoom(zoom * ZOOM_STEP);
+    expect(zoom).toBe(ZOOM_MAX);
+    for (let i = 0; i < 100; i += 1) zoom = clampZoom(zoom / ZOOM_STEP);
+    expect(zoom).toBe(ZOOM_MIN);
+  });
+
+  it('never lets the camera zoom out past the whole map', () => {
+    // ZOOM_MIN below 1 would frame empty board; above 1 would cut the map off at the default.
+    expect(ZOOM_MIN).toBeLessThanOrEqual(1);
+    expect(ZOOM_MAX).toBeGreaterThan(1);
+  });
+});
+
+describe('isoCameraFrame under zoom', () => {
+  it('shrinks the frustum as the zoom goes up, at both limits', () => {
+    const square = squareMap(8);
+    const wide = isoCameraFrame(square, 1.6, ZOOM_MIN);
+    const near = isoCameraFrame(square, 1.6, ZOOM_MAX);
+    expect(near.halfWidth).toBeLessThan(wide.halfWidth);
+    // Still square: the isometric projection must not stretch when the player zooms.
+    expect(near.halfWidth / near.halfHeight).toBeCloseTo(wide.halfWidth / wide.halfHeight, 10);
+  });
+
+  it('fits the whole map at zoom 1, board overhang included', () => {
+    const frame = isoCameraFrame(map, 1.6, 1);
+    const extents = projectedHalfExtents(map);
+    expect(frame.halfWidth).toBeGreaterThanOrEqual(extents.u);
+    expect(frame.halfHeight).toBeGreaterThanOrEqual(extents.v);
   });
 });

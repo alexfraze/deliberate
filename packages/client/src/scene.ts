@@ -290,7 +290,11 @@ export function createGameScene(palette: Palette): GameScene {
     mesh.material.transparent = down > 0;
   };
 
-  /** Sets a unit's base colour from its faction and the current theme. */
+  /**
+   * Sets a unit's base colour from its faction and the current theme. A trace of the same hue as
+   * emissive keeps a unit recognisable inside the key light's own shadow — an ally behind a wall
+   * should still read as an ally rather than as a dark lozenge.
+   */
   const paintEntity = (id: EntityId): void => {
     const mesh = entityMeshes.get(id);
     if (!mesh) return;
@@ -316,8 +320,6 @@ export function createGameScene(palette: Palette): GameScene {
       if (!mesh) {
         mesh = new Mesh(
           capsuleGeometry,
-          // A trace of emissive keeps a unit's own hue alive inside the key light's shadow, so an
-          // ally standing behind a wall is still recognisably an ally rather than a dark lozenge.
           new MeshStandardMaterial({ roughness: 0.65, metalness: 0 }),
         );
         mesh.castShadow = true;
