@@ -802,7 +802,10 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
 
   const run = (socket: RoomSocket, work: () => Promise<void>): void => {
     if (busy) {
-      refuse(socket, 'The game master is still thinking about the last action.');
+      // Phrased as a rejection of THIS request, not as a status. It used to read "is still
+      // thinking", which a client renders as persistent panel text — indistinguishable from a
+      // hung turn, even though the earlier action is running normally and will arrive.
+      refuse(socket, 'That did not go through: the previous action is still resolving.');
       return;
     }
     busy = true;
