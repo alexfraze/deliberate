@@ -241,6 +241,10 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     recording: recording?.path ?? null,
     // Preview and NPC-decision cache hit rates for this session (ALE-22).
     cache: gm.cache(),
+    // Turns the world took off its own bat, and how many of them a saved policy took with no
+    // model call (ALE-41 / ALE-37). `npcTurns` well under `turns` is the feature working: most
+    // quiet turns should find nobody with anything to react to.
+    ambient: gm.ambient(),
     // What the player's pointer has been allowed to spend this turn, and what it was refused
     // (ALE-40). `budget: 0` means speculation is switched off on this server.
     speculation: gm.speculation(),

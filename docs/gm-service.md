@@ -23,18 +23,18 @@ One request per GM turn. The caller supplies everything the turn needs, includin
 blocks, and gets the updated blocks back — the service persists nothing, so a recorded turn
 replays to the same prompt.
 
-| Field            | Type                                | Notes                                                                              |
-| ---------------- | ----------------------------------- | ---------------------------------------------------------------------------------- |
-| `session`        | string                              | Room / session id. Echoed on every `/gm/tool` call.                                |
-| `turn`           | integer                             | The turn this request belongs to.                                                  |
-| `phase`          | `preview` \| `resolve` \| `narrate` | Shapes the task line in the prompt. Default `preview`.                             |
-| `engine_token`   | string \| null                      | **Which engine to act on.** See below.                                             |
-| `state`          | object                              | A read-only state summary the engine already computed. Not authoritative.          |
-| `entities`       | string[]                            | Entity ids the world-model block may reference (ALE-15 checks against this).       |
-| `player_intent`  | object \| null                      | The intent the UI composed. The engine still validates it.                         |
-| `player_text`    | string \| null                      | Free player text. Enters the prompt as quoted data (ALE-33), never as instruction. |
-| `memory`         | `MemoryBlocks`                      | The blocks from the previous turn. See "Memory".                                   |
-| `max_tool_steps` | integer \| null                     | Per-request override of the loop's hard stop.                                      |
+| Field            | Type                                             | Notes                                                                              |
+| ---------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `session`        | string                                           | Room / session id. Echoed on every `/gm/tool` call.                                |
+| `turn`           | integer                                          | The turn this request belongs to.                                                  |
+| `phase`          | `preview` \| `resolve` \| `ambient` \| `narrate` | Shapes the task line in the prompt. Default `preview`.                             |
+| `engine_token`   | string \| null                                   | **Which engine to act on.** See below.                                             |
+| `state`          | object                                           | A read-only state summary the engine already computed. Not authoritative.          |
+| `entities`       | string[]                                         | Entity ids the world-model block may reference (ALE-15 checks against this).       |
+| `player_intent`  | object \| null                                   | The intent the UI composed. The engine still validates it.                         |
+| `player_text`    | string \| null                                   | Free player text. Enters the prompt as quoted data (ALE-33), never as instruction. |
+| `memory`         | `MemoryBlocks`                                   | The blocks from the previous turn. See "Memory".                                   |
+| `max_tool_steps` | integer \| null                                  | Per-request override of the loop's hard stop.                                      |
 
 Response:
 
@@ -57,6 +57,11 @@ Response:
 Errors: `502` when the model could not be reached (`LLMUnavailable`), `503` when there are no
 credentials or the tool contract is missing. Neither ever leaves the engine mutated, because
 neither ever reached it.
+
+`ambient` is ALE-41's addition and is additive in the only way that matters here: the phase does
+one thing, which is choose a task line. It exists rather than being a flag on `resolve` because
+`resolve`'s line opens _"Initiative is running"_, which on a quiet turn is false — and an NPC told
+it is in a fight behaves like one. See "The ambient world turn" below.
 
 ### Python → Node: `POST /gm/tool`
 
@@ -297,7 +302,60 @@ policy _execution_ produces ordinary validated intents. Neither is consulted on 
 same reason the ALE-22 decision cache is not: a cache is how an answer was arrived at, and the
 recording is about what the world did. `pnpm bank` is the tripwire, and it is green.
 
-### Player text, and the three walls
+## The ambient world turn (ALE-41)
+
+**This is the caller ALE-37 could not find.** The section above ends by saying so: the machinery
+for a cheap NPC turn is proved at 33 ms, and what is missing is somewhere that needs one every
+turn. Ambient behaviour is that somewhere.
+
+Outside an encounter there is no initiative, so `gmActor` is `null`, `resolve()` returns
+immediately, and no NPC ever acts. A player who does not draw a sword sees a photograph. The fix is
+a turn for the world, taken after every GO that commits outside an encounter — and given a verb of
+its own, `pass_time`, so a player can ask for one without doing anything else.
+
+### What it costs, and why that is the interesting part
+
+An ambient turn has to be cheap because there are many of them, and the way it is made cheap is
+that **most of them do nothing at all**. `packages/server/src/gm/ambient.ts` decides who acts by a
+pure read of the snapshot: each NPC has a coarse reading of the world — which proximity band the
+player is in, how it feels about them, where the quests stand, and which slow "nothing has
+happened" beat the clock is in — and it acts only when that reading differs from the one it last
+acted on. A player crossing empty ground pays microseconds. Only a player who did something
+perceptible pays for an NPC turn, and never more than one per turn.
+
+Of the turns that do cost something, the first is the model and the rest should be the policy. The
+policy is asked for on the **first** ambient sighting rather than the second, which is the opposite
+of the combat rule and for the opposite reason: a real ten-turn fight reached `resolve` once, so
+paying to write a program the first time an NPC acts bought nothing — whereas a guard watches a
+gate every quiet minute of a session, so a third turn is not a guess. `AMBIENT_POLICY_TASK` in
+`prompt/turn.py` is the ambient wording, and it asks for a habit rather than a battle plan.
+
+### Why it does not feel random
+
+An NPC acting for no reason is worse than an NPC standing still, so the _reason_ is first class.
+The difference between two readings is rendered as a sentence — "the player has come close enough
+to touch", "a quest has moved a step" — and shipped as `state.cue`, so the game master is told what
+the NPC noticed instead of being left to invent it. `Salience` ranks the kinds of change, and that
+ranking rather than raw distance decides who acts: the person the change is _about_ goes first, and
+distance only breaks ties. Sorting on distance alone starved anyone across the yard, because a
+neighbour at the player's elbow re-qualifies on the idle drum every few rounds.
+
+### What it does not do
+
+It does not start encounters, and it did not need to. `applyAttack` opens initiative on the first
+attack **whoever throws it**, so a guard who has had enough draws on the player, the encounter
+starts with him acting first, and `resolve` picks up the rest of the round on the same GO. That is
+one line of scheduling in `loop.ts` and no new engine code, which is the right amount of code for
+"a provoked guard should be able to start a fight".
+
+Determinism is untouched: an ambient NPC proposes tool calls through the same `/gm/tool` door, the
+engine validates and refuses them the same way, and they reach the recording as ordinary intents
+through `room.commitGmCall`. Which NPC was _asked_ is session state and is never consulted on
+replay, for the same reason the caches are not. `pnpm bank` is the tripwire and it is green at 8/8,
+316 turns — including the four recorded turns that depend on `end_turn` outside an encounter still
+being refused, which is why `pass_time` is a new verb and not a relaxed old one.
+
+## Player text, and the three walls
 
 Free player text is the one part of the prompt an untrusted party writes. Three things stand
 behind it, and the point of the design is that no one of them has to hold alone.
@@ -339,7 +397,7 @@ engine and must come back refused. The tests iterate the file, so adding a case 
 test — but re-run `pnpm --filter @deliberate/server bank:write`, because the recording is
 derived from it. See `docs/regression-bank.md`.
 
-### Memory
+## Memory
 
 `MemoryBlocks` is `{world_model, threads, npcs, ledger, ledger_digest, player_profile}`,
 re-injected every turn. Node sends the blocks in and gets the updated blocks back; the
