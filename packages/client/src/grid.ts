@@ -113,8 +113,28 @@ export interface CameraFrame {
 /** Classic 3/4 isometric direction: equal parts east, up, and south. */
 const ISO_DIRECTION: WorldPoint = { x: 1, y: 1, z: 1 };
 
-/** Margin, in tiles, kept between the map and the edge of the frustum. */
-const CAMERA_MARGIN = 1;
+/**
+ * Zoom limits. 1 fits the whole map, so pulling much below that only adds empty board; 2.6 is
+ * about six tiles across a 1280px viewport, which is as close as you can get and still see who is
+ * next to whom. Both ends are here rather than in the scene because the wheel handler and the
+ * camera have to agree on them, and two copies of a clamp drift.
+ */
+export const ZOOM_MIN = 0.85;
+export const ZOOM_MAX = 2.6;
+/** One wheel notch. Multiplicative, so a notch feels the same at either end of the range. */
+export const ZOOM_STEP = 1.12;
+
+export function clampZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) return 1;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
+}
+
+/**
+ * Margin, in tiles, kept between the map and the edge of the frustum. Enough to clear the board's
+ * own overhang (`BOARD_MARGIN` in `scene.ts`, 0.55) and a little air after it — not more, because
+ * every tile of margin is a tile of empty backdrop the subject does not get.
+ */
+const CAMERA_MARGIN = 1.15;
 
 function normalise(v: WorldPoint): WorldPoint {
   const length = Math.hypot(v.x, v.y, v.z) || 1;

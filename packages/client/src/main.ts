@@ -24,8 +24,16 @@ import {
   type Animation,
   type QueueEvent,
 } from './animation.js';
-import { cellAt } from './grid.js';
+import { createGrade } from './grade.js';
+import { ZOOM_STEP, cellAt, clampZoom } from './grid.js';
 import { createHud, type FloatingNumber } from './hud.js';
+import {
+  cssVariables,
+  otherTheme,
+  paletteFor,
+  resolveTheme,
+  type ThemeName,
+} from './palette.js';
 import { initiativeView } from './initiative.js';
 import { createDeliberatePanel } from './panel.js';
 import { createRenderer } from './renderer.js';
@@ -52,8 +60,32 @@ const overlay =
 const panelElement =
   document.getElementById('deliberate') ?? document.body.appendChild(document.createElement('div'));
 
+/**
+ * The theme (ALE-34). One token set drives both the DOM overlay and the three.js scene, so the
+ * HUD, the turn-order chips and the board can never end up lit for different times of day.
+ * `?theme=light` pins it; otherwise the browser's own preference decides.
+ */
+let theme: ThemeName = resolveTheme(
+  location.search,
+  location.hash,
+  !window.matchMedia?.('(prefers-color-scheme: light)').matches,
+);
+
+function applyTheme(next: ThemeName): void {
+  theme = next;
+  const palette = paletteFor(next);
+  for (const [name, value] of Object.entries(cssVariables(palette))) {
+    document.documentElement.style.setProperty(name, value);
+  }
+  document.documentElement.dataset['theme'] = next;
+  document.documentElement.style.colorScheme = next;
+  scene.setPalette(palette);
+  grade.setPalette(palette);
+  refreshBackendLine();
+}
+
 const hud = createHud(hudElement, overlay);
-const scene = createGameScene();
+const scene = createGameScene(paletteFor(theme));
 const queue = new AnimationQueue();
 const floats = new Map<Animation, FloatingNumber>();
 
@@ -85,10 +117,20 @@ let hash = '';
  */
 let awaitingServer = false;
 
+/** The renderer line, which names the theme so a screenshot says which one it is. */
+function refreshBackendLine(): void {
+  hud.setBackend(
+    `${backend} · three r${REVISION} · protocol v${PROTOCOL_VERSION} · ${theme}${grade.active ? '' : ' · ungraded'}`,
+  );
+}
+
 const { renderer, backend } = await createRenderer();
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+scene.configureRenderer(renderer);
 app.appendChild(renderer.domElement);
-hud.setBackend(`${backend} · three r${REVISION} · protocol v${PROTOCOL_VERSION}`);
+/** Post-processing: a colour grade, no SSAO and no bloom. `grade.ts` argues the case. */
+const grade = createGrade(renderer, scene.scene, scene.camera, paletteFor(theme));
+applyTheme(theme);
 
 function viewport(): { width: number; height: number } {
   return {
@@ -259,9 +301,12 @@ function speculationCandidate(pick: Pick): Intent | null {
 
 // --- animation -------------------------------------------------------------------------------
 
-/** A killing blow gets a brighter number than a scratch, so a death is legible at a glance. */
-const DAMAGE_COLOR = '#ff6b5a';
-const KILL_COLOR = '#ffd166';
+/**
+ * A killing blow gets a brighter number than a scratch, so a death is legible at a glance. Both
+ * come from the palette and are read per float, so they follow a theme switch mid-fight.
+ */
+const damageColor = (fatal: boolean): string =>
+  fatal ? paletteFor(theme).kill : paletteFor(theme).damage;
 
 function onAnimationEvent(event: QueueEvent): void {
   const animation = event.animation;
@@ -272,7 +317,7 @@ function onAnimationEvent(event: QueueEvent): void {
   if (animation.kind === 'damage') {
     const { target, amount, hpAfter } = animation.diff;
     if (event.type === 'start') {
-      floats.set(animation, hud.floatNumber(`-${amount}`, hpAfter > 0 ? DAMAGE_COLOR : KILL_COLOR));
+      floats.set(animation, hud.floatNumber(`-${amount}`, damageColor(hpAfter <= 0)));
     } else if (event.type === 'progress') {
       // One diff, two beats: the attacker swings, then the target takes it. `strikePhase` owns
       // where the boundary is so the flash cannot start before the blow lands.
@@ -311,7 +356,7 @@ function frame(now: number): void {
   const dt = now - lastFrame;
   lastFrame = now;
   for (const event of queue.advance(dt)) onAnimationEvent(event);
-  renderer.render(scene.scene, scene.camera);
+  grade.render();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -394,6 +439,10 @@ window.addEventListener('keydown', (event) => {
     scene.recentre();
     zoom = 1;
     hud.setHint('Camera recentred.');
+  } else if (event.key === 't' || event.key === 'T') {
+    // Both themes have to read, so both have to be one keystroke away while you are looking at it.
+    applyTheme(otherTheme(theme));
+    hud.setHint(`${theme} theme.`);
   } else return;
   event.preventDefault();
 });
@@ -439,7 +488,7 @@ renderer.domElement.addEventListener(
   'wheel',
   (event) => {
     event.preventDefault();
-    zoom = Math.min(4, Math.max(0.6, zoom * (event.deltaY > 0 ? 0.9 : 1.1)));
+    zoom = clampZoom(zoom * (event.deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP));
     scene.setZoom(zoom);
   },
   { passive: false },

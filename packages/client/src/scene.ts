@@ -5,16 +5,31 @@
  * Everything here is presentation. It reads a `ViewState` (itself derived from snapshot + diffs)
  * and never decides anything about the game; picking returns what was under the cursor and leaves
  * the rules to `selection.ts`.
+ *
+ * **The look (ALE-34) is graphic, not atmospheric.** Every colour comes from `palette.ts`; nothing
+ * here invents one. Three rules run through the whole file:
+ *
+ * 1. *Three lights, one shadow.* A hard key that casts, a hemisphere fill so shadowed faces stay
+ *    coloured rather than black, and a low rim from behind that draws a bright edge along every
+ *    silhouette. The rim is what makes a capsule read as a figure standing on the floor instead of
+ *    a shape lying on it, and it is the single cheapest thing in here.
+ * 2. *Signals are unlit.* Hover, the click marker and the selection ring are `MeshBasicMaterial`.
+ *    They are UI that happens to live in the scene, and no lighting change may be allowed to dim
+ *    them — legibility is not negotiable against mood.
+ * 3. *The map is a board.* A plinth under the tiles gives the composition an edge and fills the
+ *    gutters between tiles, so the grid reads as a deliberate lattice rather than floating squares.
  */
-import type { EntityId, MapRecord, Tile } from '@deliberate/protocol';
+import type { EntityId, MapRecord, Tile, TileCell } from '@deliberate/protocol';
 import {
-  AmbientLight,
+  BasicShadowMap,
   BoxGeometry,
   CapsuleGeometry,
   Color,
   DirectionalLight,
   Group,
+  HemisphereLight,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   OrthographicCamera,
   Raycaster,
@@ -22,39 +37,45 @@ import {
   Scene,
   type Vector2,
   Vector3,
+  type WebGPURenderer,
 } from 'three/webgpu';
 
-import { TILE_SIZE, TILE_THICKNESS, isoCameraFrame, tileToWorld, visualTopY } from './grid.js';
+import {
+  TILE_SIZE,
+  TILE_THICKNESS,
+  clampZoom,
+  isoCameraFrame,
+  tileToWorld,
+  visualTopY,
+} from './grid.js';
+import { factionColor, tileColor, type Palette } from './palette.js';
 import type { Pick } from './selection.js';
 import { isAlive, type ViewState } from './view.js';
 
-const CAPSULE_RADIUS = 0.26;
-const CAPSULE_LENGTH = 0.5;
+/**
+ * A unit is an icon, so it is drawn a little larger than life: big enough to read at the zoom that
+ * fits the whole map, still under half a tile so two neighbours never overlap.
+ */
+const CAPSULE_RADIUS = 0.3;
+const CAPSULE_LENGTH = 0.62;
 const CAPSULE_HALF = CAPSULE_RADIUS + CAPSULE_LENGTH / 2;
 
-const FACTION_COLORS: Readonly<Record<string, number>> = {
-  party: 0x4da3ff,
-  dummies: 0xd98c4a,
-  vermin: 0x8f9e5c,
-};
-
-/** Deterministic hue for a faction the palette does not know about. */
-function factionColor(faction: string): Color {
-  const known = FACTION_COLORS[faction];
-  if (known !== undefined) return new Color(known);
-  let hash = 0;
-  for (const ch of faction) hash = (hash * 31 + ch.charCodeAt(0)) % 360;
-  return new Color().setHSL(hash / 360, 0.5, 0.6);
-}
-
-function tileColor(walkable: boolean, elevation: number): Color {
-  if (!walkable) return new Color(0x171c22);
-  return new Color(0x39454f).lerp(new Color(0x6f8496), Math.min(1, elevation / 3));
-}
+/** How far the board extends past the map, in tiles. The visible edge of the composition. */
+const BOARD_MARGIN = 0.55;
+const BOARD_THICKNESS = 0.9;
+/**
+ * The board's top sits just under the floor surface, so the 2% gutter between tile boxes shows
+ * board rather than empty space. That is the grid: a lattice of recessed lines, no wireframe.
+ */
+const BOARD_TOP = -0.03;
 
 export interface GameScene {
   readonly scene: Scene;
   readonly camera: OrthographicCamera;
+  /** Repaint every material and light for a new theme. Nothing is rebuilt; only colours change. */
+  setPalette(palette: Palette): void;
+  /** Turns the shadow map on and points the renderer at the hard filter the look asks for. */
+  configureRenderer(renderer: WebGPURenderer): void;
   setMap(map: MapRecord): void;
   /** Rebuilds entity meshes to match the view and parks each on its tile. */
   syncEntities(view: ViewState): void;
@@ -102,44 +123,63 @@ export interface GameScene {
   resize(width: number, height: number): void;
 }
 
-export function createGameScene(): GameScene {
+export function createGameScene(palette: Palette): GameScene {
+  let colors = palette;
   const scene = new Scene();
-  scene.background = new Color(0x0b0d10);
+  scene.background = new Color(colors.surface);
 
   const camera = new OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
   const tiles = new Group();
   const actors = new Group();
   scene.add(tiles, actors);
 
-  const key = new DirectionalLight(0xffffff, 2.2);
-  key.position.set(6, 12, 4);
-  scene.add(key, new AmbientLight(0x8899aa, 1.4));
+  // --- the rig -----------------------------------------------------------------------------
+  // Key: from the screen's upper left and only 45 degrees up, so shadows are as long as the thing
+  // casting them and fall down-and-right into open floor where you can actually see them. A
+  // steeper sun would be more flattering and would say nothing about height.
+  const key = new DirectionalLight(new Color(colors.key), 2.5);
+  key.position.set(-8, 9, -4);
+  key.castShadow = true;
+  // Hemisphere rather than ambient: the floor's own hue bounces back up into the undersides, which
+  // is what stops a hard-lit flat scene from reading as cut-out shapes on a black card.
+  const fill = new HemisphereLight(new Color(colors.sky), new Color(colors.bounce), 1.35);
+  // Rim: low, from behind, and the most saturated light in the scene. It never lights a surface
+  // the camera can see straight on — only the grazing edges — so its whole job is silhouette.
+  const rim = new DirectionalLight(new Color(colors.rim), 1.9);
+  rim.position.set(11, 2, -13);
+  scene.add(key, fill, rim);
 
   const tileGeometry = new BoxGeometry(TILE_SIZE * 0.98, 1, TILE_SIZE * 0.98);
-  const capsuleGeometry = new CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_LENGTH, 4, 12);
+  const capsuleGeometry = new CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_LENGTH, 6, 16);
 
+  /** The plinth. Sized by `setMap`; here so the theme switch has something to repaint. */
+  const board = new Mesh(
+    new BoxGeometry(1, BOARD_THICKNESS, 1),
+    new MeshStandardMaterial({ color: new Color(colors.board), roughness: 1, metalness: 0 }),
+  );
+  board.receiveShadow = true;
+  board.visible = false;
+  scene.add(board);
+
+  // Signals are unlit (`MeshBasicMaterial`): a colour grade, a theme switch or a light that moved
+  // must not be able to take the selection ring with it.
   const hover = new Mesh(
     new BoxGeometry(TILE_SIZE, 0.04, TILE_SIZE),
-    new MeshStandardMaterial({
-      color: 0xffe08a,
-      emissive: 0x6b5518,
-      transparent: true,
-      opacity: 0.8,
-    }),
+    new MeshBasicMaterial({ color: new Color(colors.hover), transparent: true, opacity: 0.55 }),
   );
   hover.visible = false;
   scene.add(hover);
 
   const marker = new Mesh(
     new BoxGeometry(TILE_SIZE * 0.9, 0.06, TILE_SIZE * 0.9),
-    new MeshStandardMaterial({ color: 0x8ecae6, emissive: 0x1d4c63 }),
+    new MeshBasicMaterial({ color: new Color(colors.marker) }),
   );
   marker.visible = false;
   scene.add(marker);
 
   const ring = new Mesh(
-    new RingGeometry(CAPSULE_RADIUS + 0.06, CAPSULE_RADIUS + 0.16, 28),
-    new MeshStandardMaterial({ color: 0xffd166, emissive: 0x6b5518 }),
+    new RingGeometry(CAPSULE_RADIUS + 0.08, CAPSULE_RADIUS + 0.22, 32),
+    new MeshBasicMaterial({ color: new Color(colors.select) }),
   );
   ring.rotation.x = -Math.PI / 2;
   ring.visible = false;
@@ -167,6 +207,12 @@ export function createGameScene(): GameScene {
     }
   };
 
+  /** Repaints one tile from its own cell. Kept separate so a theme switch is a second pass. */
+  const paintTile = (mesh: Mesh<BoxGeometry, MeshStandardMaterial>): void => {
+    const data = mesh.userData as { tile: Tile; cell: TileCell };
+    mesh.material.color.set(tileColor(colors, data.cell, data.tile));
+  };
+
   const setMap = (next: MapRecord): void => {
     map = next;
     disposeGroup(tiles);
@@ -178,21 +224,50 @@ export function createGameScene(): GameScene {
         const height = TILE_THICKNESS + top;
         const mesh = new Mesh(
           tileGeometry,
-          new MeshStandardMaterial({
-            color: tileColor(cell.walkable, cell.elevation),
-            roughness: 0.9,
-            metalness: 0,
-          }),
+          // Roughness 1, metalness 0: a flat diffuse surface with no specular glint on it. A
+          // highlight would be the renderer describing a material the tile does not have.
+          new MeshStandardMaterial({ roughness: 1, metalness: 0 }),
         );
         const point = tileToWorld(next, x, y);
         mesh.scale.y = height;
         mesh.position.set(point.x, top - height / 2, point.z);
-        mesh.userData = { tile: { x, y } };
+        mesh.userData = { tile: { x, y }, cell };
+        // Walls cast; everything receives. A floor tile casting onto its neighbour would only ever
+        // produce shadow acne along the gutters, and it has nothing to cast.
+        mesh.castShadow = !cell.walkable || cell.elevation > 0;
+        mesh.receiveShadow = true;
+        paintTile(mesh);
         tiles.add(mesh);
       }
     }
+    const width = (next.width + BOARD_MARGIN * 2) * TILE_SIZE;
+    const depth = (next.height + BOARD_MARGIN * 2) * TILE_SIZE;
+    board.scale.set(width, 1, depth);
+    board.position.set(0, BOARD_TOP - BOARD_THICKNESS / 2, 0);
+    board.visible = true;
+    fitShadowCamera(next);
     frameCamera();
   };
+
+  /**
+   * Points the key light's shadow frustum at exactly this map. An orthographic shadow camera sized
+   * to the map instead of to some constant is what keeps the shadow crisp: the same texture covers
+   * the smallest area it can, so the hard edge stays hard on a big map as well as a small one.
+   */
+  function fitShadowCamera(next: MapRecord): void {
+    const radius = Math.hypot(next.width, next.height) * TILE_SIZE * 0.6 + 2;
+    const shadow = key.shadow;
+    shadow.mapSize.set(2048, 2048);
+    shadow.camera.left = -radius;
+    shadow.camera.right = radius;
+    shadow.camera.top = radius;
+    shadow.camera.bottom = -radius;
+    shadow.camera.near = 0.5;
+    shadow.camera.far = radius * 4 + 20;
+    shadow.bias = -0.0006;
+    shadow.normalBias = 0.04;
+    shadow.camera.updateProjectionMatrix();
+  }
 
   const placeEntity = (id: EntityId, x: number, y: number): void => {
     const mesh = entityMeshes.get(id);
@@ -215,6 +290,17 @@ export function createGameScene(): GameScene {
     mesh.material.transparent = down > 0;
   };
 
+  /** Sets a unit's base colour from its faction and the current theme. */
+  const paintEntity = (id: EntityId): void => {
+    const mesh = entityMeshes.get(id);
+    if (!mesh) return;
+    const { faction } = mesh.userData as { faction: string };
+    const color = new Color(factionColor(colors, faction));
+    baseColors.set(id, color);
+    mesh.material.color.copy(color);
+    mesh.material.emissive.copy(color).multiplyScalar(0.16);
+  };
+
   const syncEntities = (view: ViewState): void => {
     for (const [id, mesh] of entityMeshes) {
       if (view.entities[id]) continue;
@@ -228,15 +314,18 @@ export function createGameScene(): GameScene {
     for (const entity of Object.values(view.entities)) {
       let mesh = entityMeshes.get(entity.id);
       if (!mesh) {
-        const color = factionColor(entity.faction);
         mesh = new Mesh(
           capsuleGeometry,
-          new MeshStandardMaterial({ color: color.clone(), roughness: 0.5, metalness: 0.1 }),
+          // A trace of emissive keeps a unit's own hue alive inside the key light's shadow, so an
+          // ally standing behind a wall is still recognisably an ally rather than a dark lozenge.
+          new MeshStandardMaterial({ roughness: 0.65, metalness: 0 }),
         );
-        mesh.userData = { entity: entity.id };
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.userData = { entity: entity.id, faction: entity.faction };
         entityMeshes.set(entity.id, mesh);
-        baseColors.set(entity.id, color);
         actors.add(mesh);
+        paintEntity(entity.id);
       }
       applyPose(entity.id, isAlive(entity));
       placeEntity(entity.id, entity.tile.x, entity.tile.y);
@@ -247,7 +336,7 @@ export function createGameScene(): GameScene {
     const mesh = entityMeshes.get(id);
     const base = baseColors.get(id);
     if (!mesh || !base) return;
-    mesh.material.color.copy(base).lerp(new Color(0xff5a4a), Math.min(1, Math.max(0, amount)));
+    mesh.material.color.copy(base).lerp(new Color(colors.flash), Math.min(1, Math.max(0, amount)));
   };
 
   const lungeEntity = (attacker: EntityId, target: EntityId, amount: number): void => {
@@ -359,6 +448,12 @@ export function createGameScene(): GameScene {
    * and cannot be clicked at all. Widening the frustum by the same ratio shrinks the map into the
    * space that is actually visible, and the shift then centres it there. Both halves scale
    * together so the isometric projection stays square.
+   *
+   * The shift is *added* to both edges, which slides the view window right in world space and so
+   * moves the board left on screen, out from under the panel. It used to be subtracted, which
+   * pushed the board the other way — further under the panel, with the dead space opening up on
+   * the empty left instead. The map was legibly off-centre in every screenshot; ALE-34 noticed
+   * while measuring how much of the frame the board actually fills.
    */
   function frustum(): {
     halfWidth: number;
@@ -386,8 +481,8 @@ export function createGameScene(): GameScene {
     if (!map) return;
     const frame = isoCameraFrame(map, viewportWidth / viewportHeight, zoom);
     const { halfWidth, halfHeight, shift, near, far } = frustum();
-    camera.left = -halfWidth - shift;
-    camera.right = halfWidth - shift;
+    camera.left = -halfWidth + shift;
+    camera.right = halfWidth + shift;
     camera.top = halfHeight;
     camera.bottom = -halfHeight;
     camera.near = near;
@@ -420,13 +515,45 @@ export function createGameScene(): GameScene {
     frameCamera();
   };
 
+  /**
+   * A theme switch. Every colour in the scene is a palette token, so this is a repaint rather than
+   * a rebuild: no geometry is touched, nothing is disposed, and the camera does not move.
+   */
+  const setPalette = (next: Palette): void => {
+    colors = next;
+    scene.background = new Color(colors.surface);
+    key.color.set(colors.key);
+    fill.color.set(colors.sky);
+    fill.groundColor.set(colors.bounce);
+    rim.color.set(colors.rim);
+    board.material.color.set(colors.board);
+    hover.material.color.set(colors.hover);
+    marker.material.color.set(colors.marker);
+    ring.material.color.set(colors.select);
+    for (const mesh of tiles.children) {
+      if (mesh instanceof Mesh) paintTile(mesh as Mesh<BoxGeometry, MeshStandardMaterial>);
+    }
+    for (const id of entityMeshes.keys()) paintEntity(id);
+  };
+
+  /**
+   * Shadows are a renderer setting, and the renderer is made before the scene, so the scene asks
+   * for what it needs rather than leaving `main.ts` to remember. `BasicShadowMap` is the choice
+   * the direction makes: an unfiltered, aliased, *hard* edge. Softening it would be the only
+   * atmospheric thing in the frame.
+   */
+  const configureRenderer = (renderer: WebGPURenderer): void => {
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = BasicShadowMap;
+  };
+
   const setViewportInset = (rightPx: number): void => {
     viewportInset = Math.max(0, rightPx);
     frameCamera();
   };
 
   const setZoom = (next: number): void => {
-    zoom = Math.min(4, Math.max(0.6, next));
+    zoom = clampZoom(next);
     frameCamera();
   };
 
@@ -439,6 +566,8 @@ export function createGameScene(): GameScene {
   return {
     scene,
     camera,
+    setPalette,
+    configureRenderer,
     setMap,
     syncEntities,
     placeEntity,
