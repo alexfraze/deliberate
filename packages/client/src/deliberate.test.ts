@@ -114,4 +114,13 @@ describe('saying who ran the turn (ALE-39)', () => {
     expect(describeEncounter(false)).toContain('End turn has nothing to end');
     expect(describeEncounter(true)).toContain('hands initiative to the NPCs');
   });
+
+  it('names the verb that does work outside an encounter (ALE-41)', () => {
+    // The old line ended "…and the world does not act", which was true and is the bug ALE-41
+    // fixed. Out of combat there is now something to press, and the panel says which.
+    expect(describeEncounter(false)).toContain('Wait lets time pass and the world act');
+    expect(describeStaged({ kind: 'pass_time', entity: 'player' }, () => 'Halric')).toBe(
+      'Halric waits, and the world gets a turn',
+    );
+  });
 });
