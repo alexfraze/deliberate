@@ -43,3 +43,32 @@ test('clicking a tile with nothing selected inspects it', async ({ page }) => {
     /tile \(\d+, \d+\) · (walkable|blocked)|Selected/,
   );
 });
+
+/**
+ * Both themes have to read, so both have to actually come up (ALE-34). This is the cheap half of
+ * that: the palette really does reach the DOM and the scene, and `T` really does swap it. Whether
+ * the result *looks* finished is a judgement a test cannot make — that one is made by looking.
+ */
+test('renders in both themes and swaps between them', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await page.goto('/?fixture=1&theme=light');
+  await expect(page.locator('#app canvas')).toBeVisible();
+  await expect(page.locator('#hud')).toContainText('light');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+  const surfaceOf = async (): Promise<string> =>
+    page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--dl-surface').trim(),
+    );
+  const light = await surfaceOf();
+  expect(light).toMatch(/^#[0-9a-f]{6}$/);
+
+  await page.locator('#app canvas').press('T');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('#hud')).toContainText('dark');
+  expect(await surfaceOf()).not.toBe(light);
+
+  expect(errors).toEqual([]);
+});
