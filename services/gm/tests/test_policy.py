@@ -259,3 +259,75 @@ def test_a_policy_cannot_spend_the_whole_encounter_in_one_turn() -> None:
     assert len(engine.calls) == MAX_POLICY_CALLS
     assert response.trace[-1].reason == CALL_LIMIT
     assert response.trace[-1].executed is False
+
+
+# -- the ambient world turn (ALE-41) ---------------------------------------------------------
+
+
+def _ambient_request(**kwargs: Any) -> TurnRequest:
+    return TurnRequest(session="s", turn=4, phase="ambient", state=STATE, **kwargs)
+
+
+def test_the_ambient_task_line_does_not_claim_initiative_is_running() -> None:
+    """The reason `ambient` is a phase and not a flag on `resolve`.
+
+    `resolve`'s task line opens "Initiative is running", which on a quiet turn is simply false,
+    and an NPC told it is in a fight behaves like one. This is the whole content of the protocol
+    addition, so it is worth one assertion.
+    """
+    from deliberate_gm.prompt.turn import PHASE_TASK, build_user_message
+
+    assert "Initiative is running" in PHASE_TASK["resolve"]
+    assert "No encounter is running" in PHASE_TASK["ambient"]
+    # And the one instruction that stops an ambient NPC earning a guaranteed refusal.
+    assert "Do not call `end_turn`" in PHASE_TASK["ambient"]
+
+    content = build_user_message(_ambient_request())["content"]
+    assert content.endswith("## Your task\n" + PHASE_TASK["ambient"])
+
+
+def test_an_ambient_policy_is_asked_for_in_its_own_words() -> None:
+    """Both halves of ALE-37's generation prompt exist, and neither leaks into the other.
+
+    A combat policy is asked for as "how it fights it"; an idle one as "how it spends them". The
+    same string for both would tell a merchant at a stall to write a battle plan.
+    """
+    from deliberate_gm.prompt.turn import AMBIENT_POLICY_TASK, POLICY_TASK, build_user_message
+
+    ambient = build_user_message(_ambient_request(want_policy=True))["content"]
+    assert ambient.endswith(AMBIENT_POLICY_TASK)
+    assert POLICY_TASK not in ambient
+
+    combat = build_user_message(
+        TurnRequest(session="s", turn=4, phase="resolve", state=STATE, want_policy=True)
+    )["content"]
+    assert combat.endswith(POLICY_TASK)
+    assert AMBIENT_POLICY_TASK not in combat
+
+    # An ambient turn that was not asked for a policy gets the plain task line and nothing more.
+    assert AMBIENT_POLICY_TASK not in build_user_message(_ambient_request())["content"]
+
+
+def test_a_policy_runs_the_same_way_whatever_phase_wrote_it() -> None:
+    """`POST /policy` has no phase: a program is a program, and the engine validates its calls
+    either way. This is what lets the ambient turn reuse ALE-37 whole rather than copy it."""
+    engine = StubEngine()
+    engine.accept("say")
+    result = run_policy(
+        PolicyRequest(
+            session="s",
+            turn=4,
+            acting="npc:gorm",
+            # The cue is ordinary state, so a policy can read why it was woken.
+            state={**STATE, "cue": "the player has come close enough to touch"},
+            code=(
+                'cue = state.get("cue", "")\n'
+                'gm_tool("say", npc_id=state["acting"], text=cue[:19], to=None)\n'
+            ),
+        ),
+        engine=engine,
+        timeout_seconds=5,
+    )
+    assert result.ok, result.error
+    assert [record.tool for record in result.trace] == ["say"]
+    assert result.trace[0].input["text"] == "the player has come"

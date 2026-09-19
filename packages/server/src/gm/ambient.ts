@@ -23,8 +23,8 @@ import { stanceOf, type Stance } from './cache.js';
  *    noticed* rather than left to invent a reason. An NPC that acts for no reason is worse than
  *    an NPC standing still.
  * 3. **One acts per turn.** Ambient turns are frequent, so the bound on how many NPCs may act is
- *    the bound on what a quiet minute costs. Nearest first, because the NPC the player is standing
- *    in front of is the one whose silence they would notice.
+ *    the bound on what a quiet minute costs. Whoever the change is most about goes first — see
+ *    `Salience` — and distance only breaks the tie.
  *
  * Nothing here mutates anything or knows what an NPC will do. It reads a snapshot and returns a
  * list of ids with reasons; `loop.ts` takes the turns, through the same `/gm/tool` door and the
@@ -91,8 +91,10 @@ export interface AmbientSense {
 export interface AmbientCandidate {
   entity: EntityId;
   sense: AmbientSense;
-  /** Feet to the player. The sort key: the NPC being stood in front of goes first. */
+  /** Feet to the player. The tie-break, once salience has spoken. */
   distanceFt: number;
+  /** How urgent the change is. The sort key; see `Salience`. */
+  salience: Salience;
   /** What changed, in a sentence. Rides on the prompt so the model is told what the NPC noticed. */
   reason: string;
 }
@@ -174,30 +176,67 @@ const PROXIMITY_REASON: Record<Proximity, string> = {
 };
 
 /**
- * The difference between two readings, as a sentence the game master can act on. `null` means
- * nothing changed, which means this NPC has nothing to react to and should not be asked.
+ * What kind of change this is, lowest number first. Only one NPC acts per turn, so this is the
+ * question of *which* one, and it is a question about the story rather than about the map.
  *
- * An NPC with no previous reading has never acted in this scene, and that counts: it is the
- * world introducing itself, and it happens exactly once per NPC per session.
+ * Distance is the tie-break and not the ranking, and that is the whole point of having a ranking
+ * at all. Sorting on distance alone starves anyone standing across the yard: the merchant by the
+ * player's elbow re-qualifies on the slow idle drum every few rounds and takes the turn from the
+ * scout the player has just walked over to. Ranked, the person whose relationship with the player
+ * *just changed* goes first and the idler waits, which is both fairer and better drama.
  */
-export function describeChange(before: AmbientSense | undefined, now: AmbientSense): string | null {
-  if (!before) return 'they have not yet stirred since the player arrived';
-  const notes: string[] = [];
-  if (before.proximity !== now.proximity) notes.push(PROXIMITY_REASON[now.proximity]);
-  if (before.stance !== now.stance)
-    notes.push(`how they feel about the player is now ${now.stance}`);
-  if (before.quests !== now.quests) notes.push('a quest has moved a step');
-  if (before.idle !== now.idle) notes.push('time has passed and nothing has come of it');
-  return notes.length > 0 ? notes.join('; ') : null;
+export const enum Salience {
+  /** The player moved relative to them. The most direct cause there is; they saw it happen. */
+  Proximity = 0,
+  /** Something the player did changed how this NPC feels about them. */
+  Stance = 1,
+  /** The story moved a step. Everyone with a stake in it has heard. */
+  Quest = 2,
+  /** They have not acted at all yet. The world introducing itself; once per NPC per session. */
+  Unmet = 3,
+  /** Nothing happened, for a while. The slow drum; always last, and never starves anyone else. */
+  Idle = 4,
 }
 
 /**
- * Who should act this ambient turn, nearest first, and why.
+ * The difference between two readings: how urgent it is, and what it was, as a sentence the game
+ * master can act on. `null` means nothing changed, which means this NPC has nothing to react to
+ * and must not be asked — an NPC acting for no reason is worse than an NPC standing still.
+ */
+export function describeChange(
+  before: AmbientSense | undefined,
+  now: AmbientSense,
+): { salience: Salience; reason: string } | null {
+  if (!before) {
+    return {
+      salience: Salience.Unmet,
+      reason: 'they have not yet stirred since the player arrived',
+    };
+  }
+  const notes: string[] = [];
+  let salience = Salience.Idle;
+  const note = (rank: Salience, text: string): void => {
+    notes.push(text);
+    salience = Math.min(salience, rank) as Salience;
+  };
+  if (before.proximity !== now.proximity) {
+    note(Salience.Proximity, PROXIMITY_REASON[now.proximity]);
+  }
+  if (before.stance !== now.stance) {
+    note(Salience.Stance, `how they feel about the player is now ${now.stance}`);
+  }
+  if (before.quests !== now.quests) note(Salience.Quest, 'a quest has moved a step');
+  if (before.idle !== now.idle) note(Salience.Idle, 'time has passed and nothing has come of it');
+  return notes.length > 0 ? { salience, reason: notes.join('; ') } : null;
+}
+
+/**
+ * Who should act this ambient turn, most-provoked first, and why.
  *
  * `acted` is the reading each NPC last took a turn on — `loop.ts` owns it, because it is session
  * state and this module is a pure function of a snapshot. An NPC that was passed over keeps its
- * old reading and so stays a candidate next turn: being crowded out by a nearer neighbour delays
- * a reaction by a beat, it does not cancel it.
+ * old reading and so stays a candidate next turn: being crowded out delays a reaction by a beat,
+ * it does not cancel it.
  */
 export function ambientCandidates(
   snapshot: Snapshot,
@@ -213,11 +252,18 @@ export function ambientCandidates(
   const out: AmbientCandidate[] = [];
   for (const npc of ambientCast(snapshot, playerMap)) {
     const sense = senseOf(snapshot, npc, player, options);
-    const before = acted.get(npc);
-    const reason = describeChange(before, sense);
-    if (reason === null) continue;
-    out.push({ entity: npc, sense, distanceFt: distanceToPlayer(snapshot, npc, player), reason });
+    const change = describeChange(acted.get(npc), sense);
+    if (!change) continue;
+    out.push({
+      entity: npc,
+      sense,
+      distanceFt: distanceToPlayer(snapshot, npc, player),
+      ...change,
+    });
   }
-  out.sort((a, b) => a.distanceFt - b.distanceFt || (a.entity < b.entity ? -1 : 1));
+  out.sort(
+    (a, b) =>
+      a.salience - b.salience || a.distanceFt - b.distanceFt || (a.entity < b.entity ? -1 : 1),
+  );
   return out.slice(0, Math.max(0, options.max ?? MAX_AMBIENT_ACTORS));
 }
