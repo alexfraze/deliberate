@@ -445,6 +445,15 @@ renderer.domElement.addEventListener('pointerup', (event) => {
   if (event.button !== 0) return;
   // A drag is a camera move, not a selection.
   if (dragMoved) return;
+  // A preview takes tens of seconds, and a second action sent during one is refused by the server
+  // ("still thinking about the last action") — whose error frame then clears the panel, stopping
+  // the progress clock for the request that is STILL RUNNING. The turn then looks frozen when it
+  // is merely slow. Speculation already refuses to start while `awaitingServer`; the click has to
+  // as well. Say so instead of sending something doomed.
+  if (awaitingServer) {
+    hud.setHint('Still waiting on the game master — the turn in flight has to land first.');
+    return;
+  }
   const pick = scene.pick(toNdc(event));
   const result = resolvePick(selected, pick);
   setSelected(result.selected);
