@@ -12,10 +12,25 @@
   ],
   "exits": [
     {
-      "at": { "x": 1, "y": 0 },
+      "at": {
+        "x": 1,
+        "y": 0
+      },
       "to": "m1-gatehouse",
-      "entrance": { "x": 1, "y": 10 },
+      "entrance": {
+        "x": 1,
+        "y": 10
+      },
       "label": "the gatehouse yard"
+    }
+  ],
+  "frontiers": [
+    {
+      "at": {
+        "x": 8,
+        "y": 5
+      },
+      "label": "the lane running on east, out of sight past the spoil heap"
     }
   ]
 }

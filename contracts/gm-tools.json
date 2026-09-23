@@ -1,5 +1,5 @@
 {
-  "$comment": "The GM tool contract. ONE copy, two languages: TypeScript imports it via @deliberate/protocol (GM_TOOLS) and the Python GM service loads it with deliberate_gm.contracts.load_tools. `tools` is one flat array in the order the model sees it — queries first, then mutations — and that order must stay stable because the tool list is the head of the cached prompt prefix. Each entry carries `kind`: \"query\" means free and read-only (it never touches the world and never consumes the seeded RNG), \"mutation\" means it maps onto exactly one engine Intent and is validated before anything changes. `kind` lives here rather than as a hardcoded name list in each language, so adding a tool is a one-file change; loaders drop it when building the Anthropic `tools` parameter, which takes only name, description and input_schema. Every input_schema sets additionalProperties:false and lists every property in `required` (optional arguments are nullable rather than absent) because the service calls the model with strict schemas. Decision 2 of docs/m1-swarm.md.",
+  "$comment": "The GM tool contract. ONE copy, two languages: TypeScript imports it via @deliberate/protocol (GM_TOOLS) and the Python GM service loads it with deliberate_gm.contracts.load_tools. `tools` is one flat array in the order the model sees it \u2014 queries first, then mutations \u2014 and that order must stay stable because the tool list is the head of the cached prompt prefix. Each entry carries `kind`: \"query\" means free and read-only (it never touches the world and never consumes the seeded RNG), \"mutation\" means it maps onto exactly one engine Intent and is validated before anything changes. `kind` lives here rather than as a hardcoded name list in each language, so adding a tool is a one-file change; loaders drop it when building the Anthropic `tools` parameter, which takes only name, description and input_schema. Every input_schema sets additionalProperties:false and lists every property in `required` (optional arguments are nullable rather than absent) because the service calls the model with strict schemas. Decision 2 of docs/m1-swarm.md.",
   "version": 1,
   "tools": [
     {
@@ -12,7 +12,7 @@
           "scope": {
             "type": "string",
             "enum": ["world", "entities", "initiative", "map", "all"],
-            "description": "world: flags, quests and the clock. entities: every creature with its components. initiative: turn order and the current turn's economy. map: the tile grid as ASCII rows plus who stands where. all: everything (large; prefer a narrower scope)."
+            "description": "world: flags, quests and the clock. entities: every creature with its components. initiative: turn order and the current turn's economy. map: the tile grid as ASCII rows, who stands where, and this location's exits, frontiers and objectives \u2014 a frontier is an edge of the world nothing has been written beyond. all: everything (large; prefer a narrower scope)."
           },
           "entity_id": {
             "type": ["string", "null"],
@@ -176,7 +176,7 @@
     {
       "name": "roll_preview",
       "kind": "query",
-      "description": "The odds of a prospective attack or spell attack: the attack bonus, the target's AC, whether advantage or disadvantage applies and why, the chance to hit, the chance to crit, and the expected damage. Computed analytically from the rules — it does NOT roll and does NOT consume the seeded RNG, so calling it never changes what the real roll will be. Free and read-only. If the action would be illegal you get the engine's rejection reason instead of odds.",
+      "description": "The odds of a prospective attack or spell attack: the attack bonus, the target's AC, whether advantage or disadvantage applies and why, the chance to hit, the chance to crit, and the expected damage. Computed analytically from the rules \u2014 it does NOT roll and does NOT consume the seeded RNG, so calling it never changes what the real roll will be. Free and read-only. If the action would be illegal you get the engine's rejection reason instead of odds.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -448,6 +448,133 @@
           }
         },
         "required": ["entity_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "author_map",
+      "kind": "mutation",
+      "description": "Write a location that did not exist: TERRAIN ONLY (`spawn` puts anyone in it). Call it when the player reaches a frontier \u2014 an exit whose `to` is null. `terrain` uses the alphabet `get_state` gives you: `#` wall, `.` floor, `1`-`9` raised that high, a step climbing at most 1. Tiles are `[x, y]`. Every way out and objective must be walkable-reachable from the entrance, and no floor may be walled off from it, or the engine refuses the map and says why. A refusal changes nothing: fix what it names and call again.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "map_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 48,
+            "description": "Id for the new location, e.g. \"north-road\". Must be free."
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 4,
+            "maximum": 40,
+            "description": "Columns, 4-40."
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 4,
+            "maximum": 40,
+            "description": "Rows, 4-40."
+          },
+          "terrain": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 40
+            },
+            "description": "Exactly `height` strings of exactly `width` characters."
+          },
+          "back": {
+            "type": "object",
+            "description": "The way in. `at` is this map\u2019s entrance; `to` is a loaded map with a frontier at `arrive`.",
+            "properties": {
+              "at": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "description": "[x, y] here you arrive on. Must be floor."
+              },
+              "to": {
+                "type": "string",
+                "description": "An existing map id."
+              },
+              "arrive": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "description": "[x, y] of its frontier tile."
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "description": "How the way back looks from here."
+              }
+            },
+            "required": ["at", "to", "arrive", "label"],
+            "additionalProperties": false
+          },
+          "frontiers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "description": "[x, y] of the edge tile. Floor, and reachable."
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "description": "What lies that way, unwritten."
+                }
+              },
+              "required": ["at", "label"],
+              "additionalProperties": false
+            },
+            "description": "New undefined edges for a later call. May be empty."
+          },
+          "objectives": {
+            "type": "array",
+            "description": "Why the place is worth walking into. May be empty.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "description": "[x, y] it sits on. Floor, and reachable."
+                },
+                "note": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "One line you can act on later."
+                },
+                "quest": {
+                  "type": ["string", "null"],
+                  "description": "An existing quest id, or null."
+                }
+              },
+              "required": ["at", "note", "quest"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["map_id", "width", "height", "terrain", "back", "frontiers", "objectives"],
         "additionalProperties": false
       }
     }

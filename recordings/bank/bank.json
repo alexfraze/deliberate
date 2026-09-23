@@ -127,6 +127,21 @@
       }
     },
     {
+      "name": "gatehouse-authoring",
+      "file": "gatehouse-authoring.jsonl",
+      "source": "engine",
+      "description": "The world grows (ALE-44). The game master writes a location beyond the lane’s undefined edge, and the engine refuses three broken ones first: an objective walled off from the entrance, a map whose cell count lies, and a way back to a map that does not exist. The authored map travels as bytes in the `MapAuthored` diff, so this whole session replays out of the recording with no key, no network and no Python — which is the one thing about generated content that is easy to get wrong, and was got wrong once already for `spawn` (ALE-21). It loads the whole neighbourhood, because an undefined edge is the only place a location may be written past and the lane is where the one the game ships with lives.",
+      "objective": {
+        "type": "MapAuthored"
+      },
+      "expect": {
+        "turns": 5,
+        "rejected": 4,
+        "finalHash": "c7b85beead69ec86963a98b608597270b53c260d8552ec513e266c03f8c20831c57189b518d92ecdfcaef0334ee4f5fc0fbc689ecb6fda6e992686eae81152cc",
+        "objectiveTurn": 4
+      }
+    },
+    {
       "name": "injection-bank",
       "file": "injection-bank.jsonl",
       "source": "engine",

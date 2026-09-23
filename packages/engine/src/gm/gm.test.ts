@@ -92,6 +92,15 @@ describe('GM tool executor', () => {
       set_flag: { key: 'k', value: true },
       advance_quest: { quest_id: 'first-blood', step: 1 },
       end_turn: { entity_id: PLAYER },
+      author_map: {
+        map_id: 'north-road',
+        width: 8,
+        height: 6,
+        terrain: ['########', '#......#', '#......#', '#......#', '#......#', '########'],
+        back: { at: [6, 4], to: FIXTURE_MAP_ID, arrive: [1, 1], label: 'the way back' },
+        frontiers: [],
+        objectives: [],
+      },
     };
     for (const name of GM_MUTATION_TOOL_NAMES) {
       const intent = toIntent(name, args[name]!);

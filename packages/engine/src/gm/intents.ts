@@ -1,5 +1,6 @@
 import type {
   AdvanceQuestIntent,
+  AuthorMapIntent,
   Diff,
   Entity,
   EntityId,
@@ -23,10 +24,12 @@ import {
   type EngineContext,
 } from '../rules/context.js';
 import type { Store } from '../store/index.js';
+import { authorMap } from './maps.js';
 
 /**
- * The five M1 intents that act on the world rather than on the grid: `say`, `set_disposition`,
- * `spawn`, `set_flag`, `advance_quest` (ALE-31). `cast` is not here — it is a spell attack and
+ * The M1 intents that act on the world rather than on the grid: `say`, `set_disposition`,
+ * `spawn`, `set_flag`, `advance_quest` (ALE-31), joined in M4 by `author_map`, which writes a
+ * whole location and lives in `maps.ts` because its validation is the size of a module. `cast` is not here — it is a spell attack and
  * resolves through the existing attack pipeline in rules/create-engine.ts.
  *
  * These are ordinary engine intents, not a GM back door: `Engine.apply` dispatches to them and
@@ -39,7 +42,13 @@ import type { Store } from '../store/index.js';
  */
 export function applyWorldIntent(
   ctx: EngineContext,
-  intent: SayIntent | SetDispositionIntent | SpawnIntent | SetFlagIntent | AdvanceQuestIntent,
+  intent:
+    | SayIntent
+    | SetDispositionIntent
+    | SpawnIntent
+    | SetFlagIntent
+    | AdvanceQuestIntent
+    | AuthorMapIntent,
 ): Verdict {
   switch (intent.kind) {
     case 'say':
@@ -52,6 +61,8 @@ export function applyWorldIntent(
       return applySetFlag(ctx.store, intent);
     case 'advance_quest':
       return applyAdvanceQuest(ctx.store, intent);
+    case 'author_map':
+      return authorMap(ctx, intent);
   }
 }
 

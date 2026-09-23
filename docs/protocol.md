@@ -61,6 +61,17 @@ far side loaded, its entrance walkable and empty, your turn if there is one. It 
 `EntityTraversed`, which carries both ends of the crossing so a client can swap the board it draws
 rather than sliding a capsule across coordinates that now mean somewhere else.
 
+`author_map` (ALE-44) is the game master's only way to make terrain, and it is a tool rather than a
+player verb. It writes a location **beyond a frontier** — a `MapFrontier`, an undefined edge an
+existing map already carries — and the engine turns that edge into ALE-43's pair of exits itself,
+so the two ends of a link cannot disagree. Terrain only: who stands in the new place is `spawn`,
+which is already template-validated. It is refused, with a reason a player could read, when the
+terrain does not decode to `width * height` cells, when an exit, frontier or objective cannot be
+walked to from the entrance by the engine's own `path()`, when any floor is walled off from the
+entrance, when the map id is taken, or when it names a map or quest that does not exist. It emits
+`MapAuthored`, which carries the whole `MapRecord` — cells included — so a recording replays the
+new location out of its own bytes and never calls the model.
+
 The split is about authority, not shape. The engine validates whether a `spawn` names a real
 template; it has no idea who asked, by design. So the wire is where "a person at a keyboard may not
 author the world" is enforced, and it is enforced by not parsing those four kinds at all.

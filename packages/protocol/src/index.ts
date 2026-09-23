@@ -74,6 +74,40 @@ export interface MapExit {
 }
 
 /** A loaded map. `cells` is row-major, length = width * height. */
+
+/**
+ * An **undefined edge** (ALE-44): a road off the map, a door to nowhere. Nothing has been written
+ * beyond it yet, so it is deliberately not a `MapExit` — there is nothing to traverse to, and
+ * `traverse` should never have to ask whether a destination exists. Walking up to one is what asks
+ * the game master to author the place on the other side; `author_map` consumes it and leaves the
+ * pair of real exits in its place.
+ */
+export interface MapFrontier {
+  /** Tile on this map the edge is at. Walkable. */
+  at: Tile;
+  /** What it looks like from here — "a road running north through the trees". */
+  label: string;
+}
+
+/** Why a location exists: a thing to reach. Engine-checked to be walkable-reachable. ALE-44. */
+export interface MapObjective {
+  at: Tile;
+  /** One line a game master can act on. */
+  note: string;
+  /** Quest this belongs to, or `null`. A non-null id must name a loaded quest. */
+  quest: QuestId | null;
+}
+
+/**
+ * A loaded map. `cells` is row-major, length = width * height.
+ *
+ * `entrance`, `frontiers` and `objectives` were added in ALE-44 alongside ALE-43's `exits`, and
+ * every one of them is optional, so a map written before either — the fixtures, every recording's
+ * header snapshot — is still exactly the map it was. They are what makes an authored map
+ * *checkable*: it is refused unless every exit, frontier and objective is walkable-reachable from
+ * `entrance` by the engine's own `path()`, so the game master cannot write a location whose point
+ * sits behind a wall.
+ */
 export interface MapRecord {
   id: MapId;
   width: number;
@@ -84,6 +118,11 @@ export interface MapRecord {
    * before map transitions existed hashes and replays exactly as it did before.
    */
   exits?: MapExit[];
+  /** Where a traveller arriving from elsewhere sets foot. Reachability is measured from here. */
+  entrance?: Tile;
+  /** Edges nothing has been written beyond yet (ALE-44). */
+  frontiers?: MapFrontier[];
+  objectives?: MapObjective[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -364,6 +403,27 @@ export interface QuestAdvanced {
   step: number;
 }
 
+/**
+ * A location was written into the world (ALE-44) — terrain only; who stands in it is `spawn`'s
+ * job, which is already template-validated.
+ *
+ * **The diff carries the map's bytes, and that is the point.** A recording containing one of
+ * these replays by folding `map` back in: no key, no network, no model. The miniature version of
+ * getting this wrong has already happened once — `RecordingHeader` did not carry the `templates`
+ * table, so every session containing a `spawn` silently failed to replay (ALE-21) — and a
+ * generated map is the same bug with far more surface.
+ *
+ * Absolute like every other diff: `map` is the whole map, and `links` carries the whole `exits`
+ * and `frontiers` arrays of the existing map whose undefined edge this authoring consumed, not
+ * the delta. Folding it twice lands where folding it once did.
+ */
+export interface MapAuthored {
+  type: 'MapAuthored';
+  map: MapRecord;
+  /** Existing maps whose edges changed because a frontier is now a door. */
+  links: { map: MapId; exits: MapExit[]; frontiers: MapFrontier[] }[];
+}
+
 export type Diff =
   | EntityMoved
   | EntityTraversed
@@ -376,7 +436,8 @@ export type Diff =
   | EconomySpent
   | FacingChanged
   | DispositionChanged
-  | QuestAdvanced;
+  | QuestAdvanced
+  | MapAuthored;
 
 export type DiffType = Diff['type'];
 
@@ -393,6 +454,7 @@ export const DIFF_TYPES: readonly DiffType[] = [
   'FacingChanged',
   'DispositionChanged',
   'QuestAdvanced',
+  'MapAuthored',
 ] as const;
 
 // ---------------------------------------------------------------------------------------------
@@ -523,6 +585,52 @@ export interface PassTimeIntent {
 }
 
 /**
+ * The way in to a location being authored: the undefined edge it is written beyond, named from
+ * the new side. The engine turns it into the **pair** of `MapExit`s ALE-43 needs — one on each
+ * map — and consumes the frontier it was written past.
+ */
+export interface MapWayIn {
+  /** Tile on the new map you arrive on and leave by. It is that map's `entrance`. */
+  at: Tile;
+  /** An existing map. It must already carry a frontier at `arrive`; that is the edge being filled. */
+  to: MapId;
+  /** The frontier tile on `to`. */
+  arrive: Tile;
+  label: string;
+}
+
+/**
+ * Write a location that did not exist before (ALE-44). Terrain only — decision 4 of
+ * `docs/m4-swarm.md`: populating it goes through `spawn`, so one big tool does not become the
+ * place the rules get soft.
+ *
+ * The intent carries the terrain as `height` rows of `width` characters — the same ASCII the
+ * `get_state` map scope already hands the game master (`#` wall, `.` floor, `1`-`9` ground raised
+ * that high) — rather than width*height cell objects, because that is what a model reads and
+ * writes well and what fits the prompt budget. The engine decodes it; a row of the wrong length,
+ * an unknown glyph or a wall with no way round it is a rejection with a reason a player could
+ * read, exactly like an illegal move.
+ *
+ * `back` and `frontiers` are split rather than being one nullable exit list, and the split is
+ * load-bearing twice over. It makes "exactly one way back, and it is the entrance" structural
+ * instead of a rule the model can break, and it is roughly 400 tokens smaller in the tool schema —
+ * which matters, because the tool block is the head of a prompt capped at 12k input tokens and a
+ * 16th tool that overflows it costs the game master its own working memory.
+ */
+export interface AuthorMapIntent {
+  kind: 'author_map';
+  id: MapId;
+  width: number;
+  height: number;
+  /** `height` strings of `width` characters each. */
+  terrain: string[];
+  back: MapWayIn;
+  /** Edges of the new location nothing has been written beyond yet. */
+  frontiers: MapFrontier[];
+  objectives: MapObjective[];
+}
+
+/**
  * Everything the engine can be asked to do. M0 shipped `move`, `attack` and `end_turn`; ALE-31
  * added the rest for the GM's mutation tools, ALE-41 added `pass_time` and ALE-43 added
  * `traverse`. The addition is
@@ -541,7 +649,8 @@ export type Intent =
   | SetDispositionIntent
   | SpawnIntent
   | SetFlagIntent
-  | AdvanceQuestIntent;
+  | AdvanceQuestIntent
+  | AuthorMapIntent;
 
 export type IntentKind = Intent['kind'];
 
@@ -881,6 +990,7 @@ export const GM_MUTATION_TOOL_NAMES = [
   'set_flag',
   'advance_quest',
   'end_turn',
+  'author_map',
 ] as const;
 
 export type GmQueryToolName = (typeof GM_QUERY_TOOL_NAMES)[number];

@@ -116,6 +116,18 @@ function applyInto(state: Snapshot, diff: Diff): void {
       disposition.toward[diff.toward] = diff.value;
       return;
     }
+    case 'MapAuthored': {
+      // The map's bytes travel in the diff, so folding a recording back rebuilds a location the
+      // game master wrote without anything ever calling the model again (ALE-44).
+      state.world.maps[diff.map.id] = structuredClone(diff.map);
+      for (const link of diff.links) {
+        const map = state.world.maps[link.map];
+        if (!map) throw new DiffError(`diff links unknown map ${link.map}`);
+        map.exits = structuredClone(link.exits);
+        map.frontiers = structuredClone(link.frontiers);
+      }
+      return;
+    }
     case 'QuestAdvanced': {
       const quest = state.world.quests[diff.quest];
       if (!quest) throw new DiffError(`diff refers to unknown quest ${diff.quest}`);

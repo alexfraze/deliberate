@@ -65,6 +65,8 @@ function describe(diff: Diff, nameOf: (id: EntityId) => string): string | null {
       return `${diff.key} becomes ${JSON.stringify(diff.value)}.`;
     case 'EntitySpawned':
       return `${diff.entity.name} arrives.`;
+    case 'MapAuthored':
+      return `${diff.map.id} takes shape beyond the way out.`;
     case 'FacingChanged':
       return `${nameOf(diff.entity)} turns ${diff.facing}.`;
     // Turn bookkeeping is on the HUD's turn line already; repeating it as prose is noise.

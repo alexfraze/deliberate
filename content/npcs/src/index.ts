@@ -29,6 +29,7 @@ import {
   type Health,
   type Inventory,
   type MapExit,
+  type MapFrontier,
   type MapId,
   type MapRecord,
   type Portrait,
@@ -159,6 +160,13 @@ export interface NeighbourContent {
   name: string;
   rows: string[];
   exits: MapExit[];
+  /**
+   * Edges nothing has been written beyond yet (ALE-44). The lane has one — where it turns out of
+   * sight past the spoil heap — and it is the only undefined edge the game ships with. Everything
+   * further out is authored by the game master through `author_map`, which the engine refuses
+   * unless it is written beyond an edge like this one.
+   */
+  frontiers?: MapFrontier[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -220,11 +228,18 @@ export function gatehouseMap(options: GatehouseOptions = {}): MapRecord {
   return options.neighbours === false ? map : { ...map, exits: structuredClone(SCENE.exits) };
 }
 
-/** Fresh copy of the lane outside the postern, with the way back in. */
+/**
+ * The lane's undefined edge (ALE-44): where it turns out of sight past the spoil heap. This is the
+ * one frontier the game ships with, and the only place the game master may write a new location.
+ */
+export const POSTERN_LANE_FRONTIER: Tile = { ...POSTERN_LANE.frontiers![0]!.at };
+
+/** Fresh copy of the lane outside the postern, with the way back in and its one undefined edge. */
 export function posternLaneMap(): MapRecord {
   return {
     ...parseMapRows(POSTERN_LANE_MAP_ID, POSTERN_LANE.rows),
     exits: structuredClone(POSTERN_LANE.exits),
+    frontiers: structuredClone(POSTERN_LANE.frontiers ?? []),
   };
 }
 
