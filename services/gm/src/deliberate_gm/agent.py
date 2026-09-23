@@ -34,6 +34,7 @@ from .models import (
     Usage,
 )
 from .prompt import REDACTION, build_user_message, find_leak, scan_strings, system_blocks
+from .prompt import fit as fit_scope
 from .tokens import estimate_tokens
 
 #: How a local tool reaches the engine: same door, same verdict, same trace.
@@ -306,15 +307,32 @@ class GmAgent:
     def _build_turn_message(
         self, request: TurnRequest, memory: MemoryBlocks, system: list[dict[str, Any]]
     ) -> tuple[dict[str, Any], MemoryBlocks]:
-        """Give memory whatever the budget has left after the fixed parts of the prompt.
+        """Scope the state to the world the turn is in, then give memory what is left.
 
-        The system prompt, the tool schemas and the engine's state summary are not
-        negotiable; the memory blocks are. Measuring the rest first is what makes the 12k
-        budget a real ceiling rather than a hope.
+        The system prompt and the tool schemas are not negotiable. The state summary used to be
+        treated as if it were, which was true of a world of one map and false the moment there
+        were thirty: it is the only fixed part that grows with the world, so it is fitted first
+        (`prompt/scope.py`) to whatever still leaves memory its floor, and memory is fitted to
+        what remains. Measuring both against the budget rather than hoping is what makes 12k a
+        ceiling; see `docs/m4-swarm.md` decision 6.
         """
-        bare = build_user_message(request, memory_text="")
-        overhead = estimate_tokens({"system": system, "tools": self._tools, "messages": [bare]})
-        budget = max(memory_blocks.MIN_MEMORY_TOKENS, self._settings.input_token_budget - overhead)
+
+        def overhead(state: dict[str, Any]) -> int:
+            message = build_user_message(
+                request.model_copy(update={"state": state}), memory_text=""
+            )
+            return estimate_tokens({"system": system, "tools": self._tools, "messages": [message]})
+
+        held = memory_blocks.reserve(memory, budget=self._settings.input_token_budget)
+        scoped, _ = fit_scope(
+            request.state,
+            fits=lambda state: overhead(state) <= self._settings.input_token_budget - held,
+        )
+        request = request.model_copy(update={"state": scoped})
+        budget = max(
+            memory_blocks.MIN_MEMORY_TOKENS,
+            self._settings.input_token_budget - overhead(scoped),
+        )
         memory_text, fitted = memory_blocks.render(memory, budget=budget)
         return build_user_message(request, memory_text=memory_text), fitted
 

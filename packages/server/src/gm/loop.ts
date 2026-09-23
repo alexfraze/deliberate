@@ -1010,6 +1010,11 @@ export function stateSummary(
       at: entity.components.position
         ? { x: entity.components.position.x, y: entity.components.position.y }
         : null,
+      // Which map they are standing on (ALE-45). One word per entity, and the only thing the GM
+      // service needs to scope this summary spatially: without it a list of a hundred and fifty
+      // people is a list of a hundred and fifty people, and the 12k budget has nothing to cut on.
+      // See `services/gm/src/deliberate_gm/prompt/scope.py`.
+      map: entity.components.position?.map ?? null,
       hp: entity.components.health?.hp ?? null,
       maxHp: entity.components.health?.maxHp ?? null,
       conditions: entity.components.health?.conditions ?? [],

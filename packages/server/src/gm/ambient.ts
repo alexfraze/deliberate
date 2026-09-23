@@ -22,9 +22,12 @@ import { stanceOf, type Stance } from './cache.js';
  *    sentence, and that sentence rides on the prompt, so the game master is told *what the NPC
  *    noticed* rather than left to invent a reason. An NPC that acts for no reason is worse than
  *    an NPC standing still.
- * 3. **One acts per turn.** Ambient turns are frequent, so the bound on how many NPCs may act is
- *    the bound on what a quiet minute costs. Whoever the change is most about goes first — see
- *    `Salience` — and distance only breaks the tie.
+ * 3. **One acts per turn, and it is somebody the player is with.** Ambient turns are frequent, so
+ *    the bound on how many NPCs may act is the bound on what a quiet minute costs. Whoever the
+ *    change is most about goes first — see `Salience` — and distance only breaks the tie. Because
+ *    there is only one turn to give, who is *eligible* for it decides whether the world reads as
+ *    alive: an NPC acting across a two-hundred-foot district is a turn the player never sees, so
+ *    the cast is the player's map and their vicinity — see `AMBIENT_VICINITY_FT` (ALE-45).
  *
  * Nothing here mutates anything or knows what an NPC will do. It reads a snapshot and returns a
  * list of ids with reasons; `loop.ts` takes the turns, through the same `/gm/tool` door and the
@@ -43,6 +46,30 @@ export const AMBIENT_NOTICE_FT = 30;
 
 /** Within reach: close enough to speak to without raising a voice. One tile. */
 export const AMBIENT_ADJACENT_FT = 5;
+
+/**
+ * How far from the player an NPC may be and still be asked to act, in feet (ALE-45).
+ *
+ * The player's *map* was always the outer bound — `ambientCast` has never looked at another one —
+ * and for one small gatehouse that was the same thing as "nearby". M4 makes it a different thing.
+ * An authored district is two hundred feet across, so "on the player's map" stops meaning "where
+ * the player is", and the one ambient turn a quiet minute buys starts going to people on the far
+ * side of it. That is the worst of both: the turn is paid for and the player never learns it
+ * happened, so a world with more people in it *reads as emptier* than the world it replaced. It
+ * is the exact way this milestone could make the game worse while every test still passed.
+ *
+ * A hundred and twenty feet is four moves — far enough that somebody the player is walking
+ * towards is stirring before they arrive, and near enough that what they do lands in the same
+ * scene. Beyond it nobody is cancelled: an NPC out of vicinity keeps the reading it last acted
+ * on, so the first turn the player comes within range it is a candidate again, exactly as an NPC
+ * crowded out by `MAX_AMBIENT_ACTORS` is. Distance defers a reaction here; it never deletes a
+ * person.
+ *
+ * This is a bound on *who is asked*, not on who exists and not on who may be narrated. The map
+ * still holds everyone, `get_state` still reports them, and an NPC the player walks up to is the
+ * most salient candidate there is.
+ */
+export const AMBIENT_VICINITY_FT = 120;
 
 /**
  * Rounds of the world clock that count as one "nothing has happened" beat.
@@ -103,6 +130,8 @@ export interface AmbientOptions {
   noticeFt?: number;
   idleRounds?: number;
   max?: number;
+  /** See `AMBIENT_VICINITY_FT`. `Infinity` restores the whole-map behaviour of ALE-41. */
+  vicinityFt?: number;
 }
 
 export function proximityOf(distanceFt: number, noticeFt: number): Proximity {
@@ -120,16 +149,27 @@ export function playerOf(snapshot: Snapshot): EntityId | null {
 }
 
 /**
- * Everyone the game master plays who is in a fit state to do something: alive, conscious, on the
- * map, and with a position to act from. A corpse is skipped here rather than refused later,
- * because a model call that was always going to be rejected is money spent on a foregone answer.
+ * Everyone the game master plays who is in a fit state to do something *and near enough to be
+ * worth asking*: alive, conscious, on the player's map, within `AMBIENT_VICINITY_FT`, and with a
+ * position to act from.
+ *
+ * Both filters are the same economy. A corpse is skipped here rather than refused later, because
+ * a model call that was always going to be rejected is money spent on a foregone answer; and
+ * somebody across the district is skipped for the same reason one step on, because a model call
+ * the player never perceives is money spent on an answer nobody hears (ALE-45).
  */
-function ambientCast(snapshot: Snapshot, playerMap: string): EntityId[] {
+function ambientCast(
+  snapshot: Snapshot,
+  player: EntityId,
+  playerMap: string,
+  vicinityFt: number,
+): EntityId[] {
   return Object.values(snapshot.entities)
     .filter((entity) => {
       if (entity.components.brain?.policy !== GM_BRAIN_POLICY) return false;
       const position = entity.components.position;
       if (!position || position.map !== playerMap) return false;
+      if (distanceToPlayer(snapshot, entity.id, player) > vicinityFt) return false;
       return !isIncapacitated(entity.components.health);
     })
     .map((entity) => entity.id)
@@ -250,7 +290,8 @@ export function ambientCandidates(
   if (!player || !playerMap) return [];
 
   const out: AmbientCandidate[] = [];
-  for (const npc of ambientCast(snapshot, playerMap)) {
+  const vicinityFt = options.vicinityFt ?? AMBIENT_VICINITY_FT;
+  for (const npc of ambientCast(snapshot, player, playerMap, vicinityFt)) {
     const sense = senseOf(snapshot, npc, player, options);
     const change = describeChange(acted.get(npc), sense);
     if (!change) continue;
