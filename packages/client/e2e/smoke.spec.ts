@@ -28,6 +28,17 @@ test('renders the fixture map and animates the scripted diffs', async ({ page })
   // The scripted turns: a move, then a hit, then a hit back. The float is the damage number.
   await expect(page.locator('.float-number').first()).toBeVisible({ timeout: 15_000 });
 
+  // The dialogue thread (ALE-35). The stand-in both speaks and narrates, and the two have to
+  // arrive as different kinds of block — speech attributed to somebody, scene prose not.
+  const thread = page.locator('#dialogue');
+  await expect(thread).toBeVisible({ timeout: 15_000 });
+  await expect(thread.locator('.dl-line .dl-who')).toContainText('Training Dummy');
+  await expect(thread.locator('.dl-line .dl-said')).toContainText('thud');
+  // Streamed in two chunks and folded into one block of prose, with no portrait and no speaker.
+  const scene = thread.locator('.dl-scene');
+  await expect(scene).toHaveCount(1);
+  await expect(scene).toContainText('Straw dust');
+
   expect(errors).toEqual([]);
 });
 
@@ -37,7 +48,10 @@ test('clicking a tile with nothing selected inspects it', async ({ page }) => {
   await expect(canvas).toBeVisible();
   await expect(page.locator('#hud')).toContainText('3 entities on m0-yard');
 
-  await canvas.click({ position: { x: 40, y: 40 } }); // off the map: clears any selection
+  // Off the map, to clear any selection. The bottom-right corner rather than the top-left one:
+  // three fixed overlays sit over the canvas — the turn-order strip and the dialogue thread top
+  // left, the panel top right, the HUD bottom left — and only this corner is board all the way out.
+  await canvas.click({ position: { x: 1200, y: 690 } });
   await canvas.click(); // centre of the canvas is over the map
   await expect(page.locator('#hud')).toContainText(
     /tile \(\d+, \d+\) · (walkable|blocked)|Selected/,

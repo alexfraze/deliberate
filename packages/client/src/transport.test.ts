@@ -27,7 +27,7 @@ describe('fixture transport', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('sends a snapshot first, then the scripted turns in order', () => {
+  it('sends a snapshot first, then the scripted turns in order, then narrates', () => {
     const { messages, statuses, transport } = harness();
     expect(statuses[0]).toBe('fixture');
     expect(messages[0]?.type).toBe('snapshot');
@@ -35,9 +35,13 @@ describe('fixture transport', () => {
     vi.advanceTimersByTime(10_000);
     const types = messages.map((m) => m.type);
     expect(types[0]).toBe('snapshot');
-    expect(types.slice(1)).toEqual(['diffs', 'diffs', 'diffs']);
+    expect(types.slice(1)).toEqual(['diffs', 'diffs', 'diffs', 'narration', 'narration']);
     const turns = messages.flatMap((m) => (m.type === 'diffs' ? [m.turn] : []));
     expect(turns).toEqual([1, 2, 3]);
+    // Streamed, and sealed exactly once, which is what tells the thread the block is finished.
+    const narration = messages.flatMap((m) => (m.type === 'narration' ? [m] : []));
+    expect(narration.map((m) => m.done)).toEqual([false, true]);
+    expect(narration.map((m) => m.chunk).join('')).toContain('Straw');
     transport.close();
   });
 

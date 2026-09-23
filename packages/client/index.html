@@ -69,7 +69,6 @@
       #deliberate:not(.dl-open) .dl-staged,
       #deliberate:not(.dl-open) .dl-preview,
       #deliberate:not(.dl-open) .dl-reactions,
-      #deliberate:not(.dl-open) .dl-narration,
       #deliberate:not(.dl-open) #go {
         display: none;
       }
@@ -208,12 +207,170 @@
         border-color: var(--dl-accent, #9fd0ff);
         color: var(--dl-text, #e8eef4);
       }
-      #deliberate .dl-narration {
-        margin-top: 10px;
+      /* The dialogue thread (ALE-35). Its own region, on the empty left edge, because a growing
+         transcript in the control column on the right is what forced every max-height in this
+         file — and a capped transcript is one nobody can read back. `thread.ts` has the argument.
+         It is sandwiched between the two other left-edge overlays: clear of the turn-order strip
+         when there is an encounter (hence the sibling selector), and clear of the HUD readout at
+         the bottom, which runs to seven lines with a hint and a refusal on it. */
+      #dialogue {
+        position: fixed;
+        left: 12px;
+        top: 12px;
+        /* Height follows the conversation and stops at the HUD readout, which runs to seven lines
+           with a hint and a refusal on it. A ceiling rather than a fixed box: two lines of
+           dialogue should not draw an empty column the height of the screen, and two hundred
+           should not push anything off the bottom of it. */
+        max-height: calc(100vh - 168px);
+        width: 340px;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        font-size: 13px;
+        line-height: 1.5;
         color: var(--dl-text, #e8eef4);
-        white-space: pre-wrap;
-        max-height: 30vh;
+        background: var(--dl-panel, rgba(11, 17, 23, 0.86));
+        border: 1px solid var(--dl-panel-edge, #22303d);
+        border-radius: 8px;
+        text-shadow: var(--dl-text-shadow, 0 1px 2px rgba(0, 0, 0, 0.85));
+      }
+      #initiative:not([hidden]) ~ #dialogue {
+        top: 76px;
+        max-height: calc(100vh - 232px);
+      }
+      /* Collapsed: the header only, so the board can be reclaimed mid-fight without losing the
+         conversation. `width()` reports 0 in this state and the board recentres accordingly. */
+      #dialogue.is-collapsed .dl-thread-list,
+      #dialogue.is-collapsed .dl-thread-jump {
+        display: none;
+      }
+      #dialogue .dl-thread-title {
+        flex: none;
+        padding: 7px 10px;
+        font: inherit;
+        font-size: 12px;
+        letter-spacing: 0.05em;
+        text-align: left;
+        color: var(--dl-text-muted, #8496a8);
+        background: transparent;
+        border: 0;
+        border-bottom: 1px solid var(--dl-panel-edge, #22303d);
+        cursor: pointer;
+      }
+      #dialogue.is-collapsed .dl-thread-title {
+        border-bottom: 0;
+      }
+      #dialogue .dl-thread-title:hover {
+        color: var(--dl-text, #e8eef4);
+      }
+      #dialogue .dl-thread-list {
+        flex: 1;
+        min-height: 0;
         overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 2px 10px 10px;
+      }
+      /* Only while you have scrolled back. Following the conversation needs no button. */
+      #dialogue .dl-thread-jump {
+        position: absolute;
+        right: 12px;
+        bottom: 8px;
+        padding: 3px 9px;
+        font: inherit;
+        font-size: 11px;
+        color: var(--dl-field, #0b1117);
+        background: var(--dl-accent, #9fd0ff);
+        border: 0;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+        cursor: pointer;
+      }
+      /* One spoken line: a portrait slot, the speaker, and what they said. */
+      #dialogue .dl-line {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      /* Your own side of the conversation, facing the other way — which is the whole reason a
+         thread reads as a conversation and a log does not. */
+      #dialogue .dl-line.is-self {
+        flex-direction: row-reverse;
+      }
+      #dialogue .dl-line.is-pending {
+        opacity: 0.55;
+      }
+      #dialogue .dl-line.is-pending .dl-said::after {
+        content: ' …';
+      }
+      /* The portrait slot. Placeholder initials over the faction colour until there is art; a real
+         portrait is a background-image on this same box and moves nothing. */
+      #dialogue .dl-portrait {
+        flex: none;
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--dl-speaker, currentColor);
+        background-color: color-mix(in srgb, var(--dl-speaker, currentColor) 16%, transparent);
+        background-size: cover;
+        background-position: center;
+        border: 1px solid color-mix(in srgb, var(--dl-speaker, currentColor) 55%, transparent);
+        overflow: hidden;
+      }
+      #dialogue .dl-body {
+        flex: 1;
+        min-width: 0;
+      }
+      #dialogue .dl-who {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        color: var(--dl-speaker, currentColor);
+      }
+      #dialogue .dl-to {
+        margin-left: 5px;
+        font-weight: 400;
+        color: var(--dl-text-muted, #8496a8);
+      }
+      /* inline-block so the bubble hugs what was said rather than the column: a one-line remark
+         reads as a remark. `text-align` is reset inside it because prose is read from the left
+         even when the bubble it sits in is pinned to the right. */
+      #dialogue .dl-said {
+        display: inline-block;
+        box-sizing: border-box;
+        max-width: 100%;
+        margin: 2px 0 0;
+        padding: 5px 8px;
+        text-align: left;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        border-left: 2px solid var(--dl-speaker, currentColor);
+        border-radius: 0 6px 6px 0;
+        background: color-mix(in srgb, var(--dl-speaker, currentColor) 9%, transparent);
+      }
+      #dialogue .is-self .dl-body {
+        text-align: right;
+      }
+      #dialogue .is-self .dl-said {
+        border-left: 0;
+        border-right: 2px solid var(--dl-speaker, currentColor);
+        border-radius: 6px 0 0 6px;
+      }
+      /* Scene prose. No portrait, no name, no side — stage direction rather than someone talking,
+         which is the distinction the old single narration box could not make. */
+      #dialogue .dl-scene {
+        margin: 12px 0 2px;
+        padding: 8px 4px;
+        color: var(--dl-text-muted, #8496a8);
+        font-style: italic;
+        text-align: center;
+        white-space: pre-wrap;
+        border-top: 1px solid var(--dl-panel-edge, #22303d);
+        border-bottom: 1px solid var(--dl-panel-edge, #22303d);
       }
       /* The turn-order strip (ALE-19). Top-centre, clear of the panel on the right and the HUD at
          the bottom left, because in a fight it is the thing you look at most. Hidden outright
@@ -305,6 +462,7 @@
     <div id="app"></div>
     <div id="overlay"></div>
     <div id="initiative" hidden></div>
+    <div id="dialogue" hidden></div>
     <div id="hud"></div>
     <div id="deliberate"></div>
     <script type="module" src="/src/main.ts"></script>

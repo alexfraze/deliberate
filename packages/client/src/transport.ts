@@ -68,6 +68,12 @@ const MAX_FIXTURE_STEPS = 6;
  * paths, fixed damage, no initiative — but it produces the same protocol messages, including
  * `error` with a player-readable reason, which is what the HUD is wired against.
  */
+/** Scene prose for the offline stand-in, in chunks, because a real narration arrives streamed. */
+const FIXTURE_NARRATION = [
+  'The dummy takes it square and swings back out of habit.',
+  ' Straw dust hangs in the light off the yard wall.',
+];
+
 export function connectFixture(handlers: TransportHandlers): Transport {
   const view: ViewState = viewFromSnapshot(fixtureSnapshot());
   let turn = 0;
@@ -133,8 +139,28 @@ export function connectFixture(handlers: TransportHandlers): Transport {
     setTimeout(() => {
       emit(fixtureSnapshotMessage(turn));
       // Play the scripted turns so the animation queue has something to chew on at start-up.
-      fixtureScript().forEach((diffs, i) => {
+      const script = fixtureScript();
+      script.forEach((diffs, i) => {
         timers.push(setTimeout(() => commit(diffs), 900 + i * 1400));
+      });
+      // And narrate the last of them, streamed the way a real game master does (ALE-35). Without
+      // this the offline stand-in exercises every path the dialogue thread has except the one
+      // that draws scene prose, which is the half of the thread a model would otherwise be
+      // needed to see at all.
+      FIXTURE_NARRATION.forEach((chunk, i) => {
+        timers.push(
+          setTimeout(
+            () =>
+              emit({
+                type: 'narration',
+                room: DEFAULT_ROOM,
+                turn,
+                chunk,
+                done: i === FIXTURE_NARRATION.length - 1,
+              }),
+            900 + script.length * 1400 + i * 420,
+          ),
+        );
       });
     }, 0),
   );
