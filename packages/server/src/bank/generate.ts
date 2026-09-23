@@ -16,6 +16,8 @@ import {
 import injectionBank from '@deliberate/contracts/injection-bank.json' with { type: 'json' };
 import {
   GATEHOUSE_SEED,
+  POSTERN_LANE_FRONTIER,
+  POSTERN_LANE_MAP_ID,
   GUARD_ID,
   MERCHANT_ID,
   NPC_ARCHETYPES,
@@ -236,6 +238,74 @@ const SCENARIOS: Scenario[] = [
       tool('attack', { attacker: MERCHANT_ID, target: PLAYER, ability: 'dagger' });
       tool('cast', { entity_id: MERCHANT_ID, spell: 'fire_bolt', target: PLAYER });
       tool('end_turn', { entity_id: MERCHANT_ID });
+    },
+  },
+  {
+    name: 'gatehouse-authoring',
+    description:
+      'The world grows (ALE-44). The game master writes a location beyond the lane\u2019s undefined ' +
+      'edge, and the engine refuses three broken ones first: an objective walled off from the ' +
+      'entrance, a map whose cell count lies, and a way back to a map that does not exist. The ' +
+      'authored map travels as bytes in the `MapAuthored` diff, so this whole session replays out ' +
+      'of the recording with no key, no network and no Python \u2014 which is the one thing about ' +
+      'generated content that is easy to get wrong, and was got wrong once already for `spawn` ' +
+      '(ALE-21). It loads the whole neighbourhood, because an undefined edge is the only place a ' +
+      'location may be written past and the lane is where the one the game ships with lives.',
+    objective: { type: 'MapAuthored' },
+    snapshot: gatehouseSnapshot(),
+    seed: GATEHOUSE_SEED,
+    play({ tool }) {
+      const beyond = {
+        width: 12,
+        height: 8,
+        terrain: [
+          '############',
+          '#..........#',
+          '#...1111...#',
+          '#...1111...#',
+          '#..........#',
+          '#..##..##..#',
+          '#..........#',
+          '######.#####',
+        ],
+        back: {
+          at: [6, 7],
+          to: POSTERN_LANE_MAP_ID,
+          arrive: [POSTERN_LANE_FRONTIER.x, POSTERN_LANE_FRONTIER.y],
+          label: 'the lane back down to the postern',
+        },
+        frontiers: [{ at: [1, 1], label: 'a sheep track climbing north over the ridge' }],
+        objectives: [
+          {
+            at: [5, 2],
+            note: 'The spoil heap itself, and boot-prints going up it that nobody has explained.',
+            quest: 'carry-the-scout',
+          },
+        ],
+      };
+
+      // Three refusals first. Each one changes nothing, which the hash chain in this file proves.
+      tool('author_map', {
+        ...beyond,
+        map_id: 'sealed-vault',
+        width: 8,
+        height: 6,
+        terrain: ['########', '#......#', '#.###..#', '#.#.#..#', '#.###..#', '########'],
+        back: { ...beyond.back, at: [6, 4] },
+        frontiers: [],
+        objectives: [{ at: [3, 3], note: 'the reliquary', quest: null }],
+      });
+      tool('author_map', { ...beyond, map_id: 'the-short-rows', terrain: ['###########'] });
+      tool('author_map', {
+        ...beyond,
+        map_id: 'the-old-mill',
+        back: { ...beyond.back, to: 'nowhere-at-all' },
+      });
+
+      // And the one the engine accepts: a location that did not exist when the session started.
+      tool('author_map', { ...beyond, map_id: 'spoil-heap-rise' });
+      // The edge is a door now, not a frontier, so nothing else may be written past it.
+      tool('author_map', { ...beyond, map_id: 'somewhere-else' });
     },
   },
   {

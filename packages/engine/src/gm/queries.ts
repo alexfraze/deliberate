@@ -170,6 +170,12 @@ function describeMap(store: Store, map: MapRecord): unknown {
     legend: '# impassable, . floor at elevation 0, digit walkable at that elevation',
     rows,
     occupants,
+    // Authored geography (ALE-44). `frontiers` are the undefined edges: the only tiles
+    // `author_map` may write beyond, and the reason the game master can see one at all.
+    ...(map.exits?.length ? { exits: map.exits } : {}),
+    ...(map.frontiers?.length ? { frontiers: map.frontiers } : {}),
+    ...(map.entrance ? { entrance: map.entrance } : {}),
+    ...(map.objectives?.length ? { objectives: map.objectives } : {}),
   };
 }
 

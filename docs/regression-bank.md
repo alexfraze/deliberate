@@ -19,15 +19,16 @@ what makes that affordable.
 `recordings/bank/` is the bank: one JSONL recording per session, plus `bank.json`, which names each
 session, what counts as its objective, and the numbers it produced.
 
-| session                | source | turns | what it is there to catch                                                        |
-| ---------------------- | ------ | ----- | -------------------------------------------------------------------------------- |
-| `m1-acceptance`        | live   | 56    | ALE-17: a drawn sword, and a game master that answered by opening the gate       |
-| `yard-brawl`           | live   | 58    | ALE-25: a **death** a real model caused — two of them, and initiative wrapping   |
-| `parley`               | live   | 62    | ALE-25: ten turns with no encounter at all; flags, dispositions, two quest steps |
-| `m0-yard-skirmish`     | engine | 6     | a death: damage, the `dead` condition, the clock, a corpse refusing              |
-| `gatehouse-refusals`   | engine | 9     | every mutation kind refused; a whole session that changes nothing                |
-| `gatehouse-initiative` | engine | 9     | four combatants, initiative wrapping twice into round three                      |
-| `gatehouse-gm-tools`   | engine | 12    | all nine mutation tools through `executeGmTool`, `spawn` included                |
+| session                | source | turns | what it is there to catch                                                          |
+| ---------------------- | ------ | ----- | ---------------------------------------------------------------------------------- |
+| `m1-acceptance`        | live   | 56    | ALE-17: a drawn sword, and a game master that answered by opening the gate         |
+| `yard-brawl`           | live   | 58    | ALE-25: a **death** a real model caused — two of them, and initiative wrapping     |
+| `parley`               | live   | 62    | ALE-25: ten turns with no encounter at all; flags, dispositions, two quest steps   |
+| `m0-yard-skirmish`     | engine | 6     | a death: damage, the `dead` condition, the clock, a corpse refusing                |
+| `gatehouse-refusals`   | engine | 9     | every mutation kind refused; a whole session that changes nothing                  |
+| `gatehouse-initiative` | engine | 9     | four combatants, initiative wrapping twice into round three                        |
+| `gatehouse-gm-tools`   | engine | 12    | all nine mutation tools through `executeGmTool`, `spawn` included                  |
+| `gatehouse-authoring`  | engine | 5     | ALE-44: a location the game master wrote, and three broken ones the engine refused |
 
 The three live entries cost roughly $2 and half an hour each and are never regenerated: their
 bytes are evidence. They are three different stories on purpose — three recordings of the same
@@ -36,9 +37,18 @@ in combat, or only in dialogue, needs somewhere to fail. `SCRIPTS` in
 `packages/server/src/acceptance.test.ts` is what they were played from; `DELIBERATE_SCRIPT` picks
 one and `DELIBERATE_WRITE_FIXTURE=1` copies the result into this directory.
 
-The engine-driven four are a pure function of the engine and the seeds, written by
+The engine-driven five are a pure function of the engine and the seeds, written by
 `packages/server/src/bank/generate.ts`. The test regenerates them and holds the result to the
 committed bytes, so a rules change shows up as a diff rather than as a silent rewrite.
+
+`gatehouse-authoring` is where M4's promise is kept as an artifact rather than a claim. The game
+master writes `spoil-heap-rise` beyond the lane's undefined edge, and the map's bytes travel in the
+`MapAuthored` diff — so replaying it needs no key, no network and no Python, which is exactly the
+thing that was got wrong once already when `RecordingHeader` did not carry the `templates` table
+and every session containing a `spawn` silently stopped replaying. Three deliberately broken maps
+come first, one per rule that matters: an objective walled off from the entrance, a map whose cell
+count lies, and a way back to a map that does not exist. A validator that only ever passes is
+worthless, so they are in the bank too, refused, with the hash unmoved on either side.
 
 `bank.json` is derived, never hand-edited — a hand-typed hash is a hash nobody checked.
 

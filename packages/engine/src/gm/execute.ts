@@ -8,6 +8,7 @@ import {
   type GmToolCall,
   type GmToolResult,
   type Intent,
+  type MapWayIn,
   type Snapshot,
   type Tile,
 } from '@deliberate/protocol';
@@ -81,6 +82,32 @@ export function executeGmBatch(engine: Engine, calls: readonly GmToolCall[]): Gm
   return { results, rejectedAt: null };
 }
 
+/**
+ * `author_map` writes tiles as `[x, y]` pairs rather than `{x, y}` objects. Four nested tile
+ * schemas is roughly 400 tokens of a prompt capped at 12k, and the tool block is the head of the
+ * cached prefix: a schema that overflows the budget costs the game master the tool results it
+ * needs to act on, which is not a saving. A pair that is not two whole numbers survives to the
+ * engine, which refuses it by name.
+ */
+function toTile(pair: unknown): Tile {
+  const [x, y] = Array.isArray(pair) ? pair : [];
+  return { x: x as number, y: y as number };
+}
+
+function list<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function wayIn(value: unknown): MapWayIn {
+  const back = (value ?? {}) as Record<string, unknown>;
+  return {
+    at: toTile(back['at']),
+    to: back['to'] as string,
+    arrive: toTile(back['arrive']),
+    label: (back['label'] ?? '') as string,
+  };
+}
+
 function rejected(reason: string): GmToolResult {
   return { ok: false, reason, diff: [] };
 }
@@ -128,7 +155,7 @@ function runQuery(snapshot: Snapshot, name: string, args: Record<string, unknown
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The mapping table, and the reason the GM cannot invent a mutation: nine tools, nine intents,
+ * The mapping table, and the reason the GM cannot invent a mutation: ten tools, ten intents,
  * nothing else. Arguments have already been checked against the tool's schema, so the casts here
  * are reading a shape the validator just confirmed.
  */
@@ -183,6 +210,22 @@ export function toIntent(name: string, args: Record<string, unknown>): Intent | 
       };
     case 'end_turn':
       return { kind: 'end_turn', entity: args['entity_id'] as EntityId };
+    case 'author_map':
+      return {
+        kind: 'author_map',
+        id: args['map_id'] as string,
+        width: args['width'] as number,
+        height: args['height'] as number,
+        terrain: args['terrain'] as string[],
+        back: wayIn(args['back']),
+        frontiers: list<{ at: unknown; label: string }>(args['frontiers']).map((f) => ({
+          at: toTile(f.at),
+          label: f.label,
+        })),
+        objectives: list<{ at: unknown; note: string; quest: string | null }>(
+          args['objectives'],
+        ).map((o) => ({ at: toTile(o.at), note: o.note, quest: o.quest })),
+      };
     default:
       return null;
   }

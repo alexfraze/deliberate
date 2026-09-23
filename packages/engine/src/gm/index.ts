@@ -23,5 +23,12 @@ export {
   type RollPreviewArgs,
   type TwoTileArgs,
 } from './queries.js';
+export {
+  authorMap,
+  frontiers,
+  MAX_AUTHORED_ELEVATION,
+  MAX_AUTHORED_MAP_SIZE,
+  MIN_AUTHORED_MAP_SIZE,
+} from './maps.js';
 export { getSpell, SPELLS, SPELL_ACTION } from './spells.js';
 export { SUPPORTED_SCHEMA_KEYWORDS, validateAgainstSchema } from './validate.js';

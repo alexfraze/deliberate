@@ -92,6 +92,7 @@ export function createEngine(initial: Snapshot, options: EngineOptions): Engine 
         case 'spawn':
         case 'set_flag':
         case 'advance_quest':
+        case 'author_map':
           return applyWorldIntent(ctx, intent);
         default:
           return reject(`Unknown intent ${String((intent as Intent).kind)}.`);
