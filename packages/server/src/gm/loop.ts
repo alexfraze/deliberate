@@ -186,8 +186,9 @@ export interface GmLoopOptions {
   cacheSize?: number;
   /**
    * How the ambient world turn is tuned (ALE-41): how near the player has to be to be noticed,
-   * how many rounds of standing still count as a beat, and how many NPCs may act in one quiet
-   * turn. `ambient.max = 0` switches the feature off without a protocol change.
+   * how many rounds of standing still count as a beat, how many NPCs may act in one quiet turn,
+   * and how far from the player one may be and still be asked (`vicinityFt`, ALE-45).
+   * `ambient.max = 0` switches the feature off without a protocol change.
    */
   ambient?: AmbientOptions;
   /**

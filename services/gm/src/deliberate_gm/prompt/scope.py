@@ -129,6 +129,13 @@ def fit(
     `fits` belongs to the caller because only the caller knows what else is in the prompt. The
     fallback is deliberate rather than an error: a turn that cannot be made to fit still has to
     go out, and the tightest rung is the smallest honest thing to send.
+
+    Trying the rungs in order means rendering the message once per rung. Measured, whole-turn
+    prompt assembly costs 1.6 ms at 12 maps, 3.8 ms at 30 and 145 ms at an absurd 200 maps and
+    5,000 people -- against a model call of several seconds. Decision 7 budgets a twenty-location
+    world, so this is not worth a short-circuit; if that ever stops being true, the state alone is
+    a lower bound on the message and a rung that exceeds the ceiling on its own can be skipped
+    without rendering anything.
     """
     scoped = state
     for scope in LADDER:
