@@ -14,7 +14,7 @@ import { expect, test } from '@playwright/test';
  * the strip tracking initiative, and the dead still on screen and marked down at the end.
  */
 interface Hooked {
-  deliberate: { pending(): number };
+  deliberate: { pending(): number; board(): { width: number; height: number } | null };
 }
 
 const RECORDING = 'yard-brawl';
@@ -111,6 +111,60 @@ test('a recorded parley reads as attributed dialogue', async ({ page }) => {
   expect(shape.speakers).toBeGreaterThanOrEqual(4);
   // A conversation has two sides: the player's lines are in the thread and drawn as their own.
   expect(shape.self).toBeGreaterThan(0);
+
+  expect(pageErrors).toEqual([]);
+});
+
+/**
+ * The M4 exit criterion, in a browser (ALE-48): **a location that did not exist when the session
+ * started, drawn by the real renderer.**
+ *
+ * `recordings/bank/beyond-the-lane.jsonl` is a live session in which the game master wrote
+ * `m1-spoil-cut` beyond the postern lane's undefined edge and the player walked into it. Replaying
+ * it here is the only place the whole chain is exercised at once: the `MapAuthored` diff carries
+ * the map's bytes, `applyDiffToView` folds them into the boards the client can render, and
+ * `EntityTraversed` swaps to one of them.
+ *
+ * Before the fix this test was written for, every part of that chain was correct except the middle
+ * one, and the result was a player who walked into a new location and saw the *old* board with
+ * their own capsule standing at coordinates that meant somewhere else. Nothing threw, so only a
+ * browser could have said so.
+ */
+test('a location the game master wrote is drawn by the real renderer', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
+  await page.goto('/?replay=beyond-the-lane');
+  await expect(page.locator('#app canvas')).toBeVisible();
+
+  // The session starts in the yard the scene ships with.
+  const hud = page.locator('#hud');
+  await expect(hud).toContainText('m1-gatehouse', { timeout: 30_000 });
+
+  // ...crosses into the lane, which ships loaded beside it (ALE-43)...
+  await expect(hud).toContainText('m1-postern-lane', { timeout: 120_000 });
+
+  // ...and then into a map that was in neither the scene nor the recording's header snapshot. The
+  // board the renderer is showing is one the game master wrote mid-session, and that sentence is
+  // the milestone.
+  await expect(hud).toContainText('m1-spoil-cut', { timeout: 180_000 });
+  // And the label is not the claim: `view.mapId` moves on a crossing whether or not there is a map
+  // to show, so before the fix this test was written for the HUD said `m1-spoil-cut` while the
+  // renderer was still drawing the lane. This is the assertion that separates the two — the board
+  // really is the twelve by eight the game master wrote.
+  expect(await page.evaluate(() => (window as unknown as Hooked).deliberate.board())).toEqual({
+    width: 12,
+    height: 8,
+  });
+
+  // And home again, so the crossing is a door rather than a one-way trip.
+  await expect(hud).toContainText('m1-gatehouse', { timeout: 180_000 });
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as Hooked).deliberate.pending()), {
+      timeout: 120_000,
+      intervals: [500],
+    })
+    .toBe(0);
 
   expect(pageErrors).toEqual([]);
 });

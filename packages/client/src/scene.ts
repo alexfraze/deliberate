@@ -78,6 +78,12 @@ export interface GameScene {
   configureRenderer(renderer: WebGPURenderer): void;
   setMap(map: MapRecord): void;
   /**
+   * The board the renderer is currently drawing, or `null` before the first `setMap`. Read-only,
+   * and here because "the HUD says you are somewhere" and "there is a board under you" are
+   * different claims — ALE-48 found them disagreeing, with the label right and the board stale.
+   */
+  map(): MapRecord | null;
+  /**
    * Rebuilds entity meshes to match the view and parks each on its tile. Only the entities on the
    * rendered map get a mesh: after a crossing (ALE-43) everyone left behind is disposed, so a
    * capsule can never be drawn at a tile that means somewhere else now.
@@ -583,6 +589,7 @@ export function createGameScene(palette: Palette): GameScene {
     setPalette,
     configureRenderer,
     setMap,
+    map: () => map,
     syncEntities,
     placeEntity,
     flashEntity,
