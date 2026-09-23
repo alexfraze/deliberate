@@ -283,7 +283,18 @@ function m4Evidence(lines: RecordingLine[]): M4Evidence {
     }
   }
 
-  const usd = (t: number): number => meters.find((m) => m.turn === t)?.usd ?? 0;
+  // `RecordedTurn.turn` counts mutations and `RecordedMeter.turn` counts **player** turns, so the
+  // two cannot be matched by number. A meter is written when a player turn has finished
+  // resolving, so every mutation line belongs to the next meter that follows it in the file.
+  const owner = new Map<number, number>();
+  let waiting: number[] = [];
+  for (const line of lines) {
+    if (line.line === 'turn') waiting.push(line.turn);
+    else if (line.line === 'meter') {
+      for (const t of waiting) owner.set(t, line.turn);
+      waiting = [];
+    }
+  }
   const total = meters.reduce((a, m) => a + m.usd, 0);
   return {
     authored,
@@ -291,7 +302,9 @@ function m4Evidence(lines: RecordingLine[]): M4Evidence {
     settlers,
     stirred: [...stirred],
     recovered,
-    usdPerLocation: [...authoredTurns].map(usd),
+    usdPerLocation: [...authoredTurns].map(
+      (t) => meters.find((m) => m.turn === owner.get(t))?.usd ?? 0,
+    ),
     usdPerTurn: meters.length ? total / meters.length : 0,
   };
 }
@@ -1183,8 +1196,12 @@ describe.skipIf(!live)(`${SCRIPT}: a ten-turn playthrough against the live model
 
       const lines = parseRecording(readFileSync(path, 'utf8'));
       report(timings, usage, lines, caches);
+      // Reported *before* it is asserted, and separately from it. A gate that fails has to say
+      // what it found — where the player actually got to, what was written, who was standing in
+      // it — or the run costs money and produces a stack trace instead of an answer.
+      if (PLAY.m4) reportM4(m4Evidence(lines));
       assertAcceptance(lines, { ...PLAY, playerTurns: TURNS.length });
-      if (PLAY.m4) reportM4(assertM4Gate(lines));
+      if (PLAY.m4) assertM4Gate(lines);
       // The live engine and a fresh engine fed only the recorded intents agree, byte for byte.
       expect(replay(lines, createEngine).finalHash).toBe(finalHash);
     },

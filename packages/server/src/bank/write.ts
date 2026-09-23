@@ -74,6 +74,25 @@ const LIVE: Omit<BankSession, 'expect'>[] = [
       "in bulk, and the only one in which the engine's turn machinery is never touched at all.",
     objective: { type: 'QuestAdvanced', where: { quest: 'carry-the-scout' } },
   },
+  {
+    name: 'beyond-the-lane',
+    file: 'beyond-the-lane.jsonl',
+    source: 'live',
+    description:
+      'ALE-48, the M4 acceptance run: the only session in the bank in which the player leaves ' +
+      'the map they started on, and the only live one in which the world grows. Fifteen player ' +
+      'turns out of the gatehouse, through the postern, east along the lane to the one undefined ' +
+      'edge the game ships with — and there the game master writes `m1-spoil-cut`, a twelve by ' +
+      'eight cut through the spoil with a raised heap in the middle of it, two new edges of its ' +
+      'own and an objective hung on `carry-the-scout`. The player walks into it, someone the ' +
+      'game master spawned there argues with them over a tipped handcart, and then they walk all ' +
+      'the way home. Four crossings, one authored location, and a `MapAuthored` diff carrying ' +
+      "the whole map's bytes, so every one of those turns replays out of this file with no key, " +
+      'no network and no Python. `gatehouse-authoring` proves the same thing about a scripted ' +
+      'game master; this proves it about a real one, and adds the half a generator cannot reach ' +
+      '— a location chosen, named and populated because of what a player said they were doing.',
+    objective: { type: 'MapAuthored' },
+  },
 ];
 
 export function writeBank(dir: string = BANK_DIR): BankManifest {

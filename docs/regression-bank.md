@@ -24,18 +24,19 @@ session, what counts as its objective, and the numbers it produced.
 | `m1-acceptance`        | live   | 56    | ALE-17: a drawn sword, and a game master that answered by opening the gate         |
 | `yard-brawl`           | live   | 58    | ALE-25: a **death** a real model caused — two of them, and initiative wrapping     |
 | `parley`               | live   | 62    | ALE-25: ten turns with no encounter at all; flags, dispositions, two quest steps   |
+| `beyond-the-lane`      | live   | 54    | ALE-48: a player walks into a location a real game master wrote, and walks home    |
 | `m0-yard-skirmish`     | engine | 6     | a death: damage, the `dead` condition, the clock, a corpse refusing                |
 | `gatehouse-refusals`   | engine | 9     | every mutation kind refused; a whole session that changes nothing                  |
 | `gatehouse-initiative` | engine | 9     | four combatants, initiative wrapping twice into round three                        |
 | `gatehouse-gm-tools`   | engine | 12    | all nine mutation tools through `executeGmTool`, `spawn` included                  |
 | `gatehouse-authoring`  | engine | 5     | ALE-44: a location the game master wrote, and three broken ones the engine refused |
 
-The three live entries cost roughly $2 and half an hour each and are never regenerated: their
-bytes are evidence. They are three different stories on purpose — three recordings of the same
-beats would only be the first recording weighed three times, and a regression that shows up only
-in combat, or only in dialogue, needs somewhere to fail. `SCRIPTS` in
-`packages/server/src/acceptance.test.ts` is what they were played from; `DELIBERATE_SCRIPT` picks
-one and `DELIBERATE_WRITE_FIXTURE=1` copies the result into this directory.
+The four live entries cost roughly $2 and half an hour each and are never regenerated: their
+bytes are evidence. They are four different stories on purpose — four recordings of the same
+beats would only be the first recording weighed four times, and a regression that shows up only
+in combat, or only in dialogue, or only when the world grows, needs somewhere to fail. `SCRIPTS`
+in `packages/server/src/acceptance.test.ts` is what they were played from; `DELIBERATE_SCRIPT`
+picks one and `DELIBERATE_WRITE_FIXTURE=1` copies the result into this directory.
 
 The engine-driven five are a pure function of the engine and the seeds, written by
 `packages/server/src/bank/generate.ts`. The test regenerates them and holds the result to the
@@ -49,6 +50,15 @@ and every session containing a `spawn` silently stopped replaying. Three deliber
 come first, one per rule that matters: an objective walled off from the entrance, a map whose cell
 count lies, and a way back to a map that does not exist. A validator that only ever passes is
 worthless, so they are in the bank too, refused, with the hash unmoved on either side.
+
+`beyond-the-lane` is the same promise kept by a **real** game master, which is the half a
+generator cannot reach (ALE-48). A scripted session can prove that an authored map replays; only a
+live one can show a model choosing where to write, what to call it, what is worth walking in for
+and who is standing in it when you arrive — and then a player crossing four map boundaries to get
+there and back. It earns its own entry rather than an edit to `gatehouse-authoring` for the reason
+every entry here does: **new terrain earns a new session, not an edited one**, and every recording
+that was in the bank before it is byte-identical after it. It is also the only session in the bank
+containing a `traverse` at all, so it is what would fail if map transitions ever stopped working.
 
 `bank.json` is derived, never hand-edited — a hand-typed hash is a hash nobody checked.
 
