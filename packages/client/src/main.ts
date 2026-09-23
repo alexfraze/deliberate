@@ -32,7 +32,7 @@ import { initiativeView } from './initiative.js';
 import { createDeliberatePanel } from './panel.js';
 import { createRenderer } from './renderer.js';
 import { createGameScene } from './scene.js';
-import { resolvePick, type Pick } from './selection.js';
+import { exitAt, resolvePick, type Pick, type PickWorld } from './selection.js';
 import { createSpeculator } from './speculate.js';
 import { NO_GM } from './deliberate.js';
 import { replayName } from './replay.js';
@@ -144,6 +144,32 @@ function resize(): void {
 }
 window.addEventListener('resize', resize);
 resize();
+
+/**
+ * What a click has to know beyond the pick itself: where the selected entity stands and what map
+ * it stands on. That is what turns a click on your own tile into taking the door under your feet.
+ */
+function pickWorld(): PickWorld {
+  const entity = selected === null ? undefined : view.entities[selected];
+  return { at: entity && entity.map === view.mapId ? entity.tile : null, map: view.map };
+}
+
+/**
+ * The board has been swapped (ALE-43): a different map, a different cast, and a camera that was
+ * framed for somewhere else. Everything tied to the old map goes — the hover, the click marker,
+ * the pan and zoom — because none of it means anything here.
+ */
+function enterMap(): void {
+  if (view.map) scene.setMap(view.map);
+  scene.setHover(null);
+  scene.setTileMarker(null);
+  hovered = null;
+  scene.recentre();
+  zoom = 1;
+  resize();
+  if (selected !== null && view.entities[selected]?.map !== view.mapId) setSelected(null);
+  hud.setHint(`You are on ${view.mapId}.`);
+}
 
 function describeSelection(id: EntityId | null): string | null {
   if (id === null) return null;
@@ -290,7 +316,7 @@ function speculationCandidate(pick: Pick): Intent | null {
   // Free text is part of the cache key (`previewKey`), and half-typed text is a key that will
   // never be asked for. Warming it would pay for an answer to a question nobody asks.
   if (panel.text()) return null;
-  return resolvePick(selected, pick).intent;
+  return resolvePick(selected, pick, pickWorld()).intent;
 }
 
 // --- animation -------------------------------------------------------------------------------
@@ -338,7 +364,11 @@ function onAnimationEvent(event: QueueEvent): void {
     }
   }
   if (event.type === 'finish') {
+    const was = view.mapId;
     applyDiffToView(view, animation.diff);
+    // A crossing is the one diff that changes what the board *is*. Rebuild it before syncing, or
+    // the capsules would be parked at tiles belonging to the map they just left.
+    if (view.mapId !== was) enterMap();
     scene.syncEntities(view);
     refreshTurn();
     if (selected !== null) hud.setSelection(describeSelection(selected));
@@ -382,7 +412,11 @@ renderer.domElement.addEventListener('pointermove', (event) => {
 function describeTile(map: MapRecord | null, tile: Tile): string {
   const cell = map ? cellAt(map, tile) : undefined;
   if (!cell) return `tile (${tile.x}, ${tile.y})`;
-  return `tile (${tile.x}, ${tile.y}) · ${cell.walkable ? 'walkable' : 'blocked'} · elevation ${cell.elevation}`;
+  // An exit is invisible terrain, so the one place a player looks for what a tile is has to say
+  // so — otherwise a doorway is a secret rather than a way out (ALE-43).
+  const exit = exitAt(map, tile);
+  const leads = exit ? ` · leads to ${exit.label ?? exit.to}` : '';
+  return `tile (${tile.x}, ${tile.y}) · ${cell.walkable ? 'walkable' : 'blocked'} · elevation ${cell.elevation}${leads}`;
 }
 
 // --- camera pan -------------------------------------------------------------------------------
@@ -455,7 +489,7 @@ renderer.domElement.addEventListener('pointerup', (event) => {
     return;
   }
   const pick = scene.pick(toNdc(event));
-  const result = resolvePick(selected, pick);
+  const result = resolvePick(selected, pick, pickWorld());
   setSelected(result.selected);
   // With nothing selected, a click just inspects the tile; with an entity selected it is a move.
   const marked = pick.kind === 'tile' && result.intent === null ? pick.tile : null;

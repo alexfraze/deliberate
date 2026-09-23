@@ -47,6 +47,8 @@ function describe(diff: Diff, nameOf: (id: EntityId) => string): string | null {
   switch (diff.type) {
     case 'EntityMoved':
       return `${nameOf(diff.entity)} moves to (${diff.to.x}, ${diff.to.y}).`;
+    case 'EntityTraversed':
+      return `${nameOf(diff.entity)} leaves ${diff.fromMap} for ${diff.toMap}.`;
     case 'DamageApplied':
       return `${nameOf(diff.target)} takes ${diff.amount} damage (${diff.hpAfter} hp left).`;
     case 'ConditionSet':

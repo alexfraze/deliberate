@@ -50,7 +50,7 @@ import {
 } from './grid.js';
 import { factionColor, tileColor, type Palette } from './palette.js';
 import type { Pick } from './selection.js';
-import { isAlive, type ViewState } from './view.js';
+import { entitiesHere, isAlive, type ViewState } from './view.js';
 
 /**
  * A unit is an icon, so it is drawn a little larger than life: big enough to read at the zoom that
@@ -77,7 +77,11 @@ export interface GameScene {
   /** Turns the shadow map on and points the renderer at the hard filter the look asks for. */
   configureRenderer(renderer: WebGPURenderer): void;
   setMap(map: MapRecord): void;
-  /** Rebuilds entity meshes to match the view and parks each on its tile. */
+  /**
+   * Rebuilds entity meshes to match the view and parks each on its tile. Only the entities on the
+   * rendered map get a mesh: after a crossing (ALE-43) everyone left behind is disposed, so a
+   * capsule can never be drawn at a tile that means somewhere else now.
+   */
   syncEntities(view: ViewState): void;
   /** Places one entity at a fractional tile position; used by the move tween. */
   placeEntity(id: EntityId, x: number, y: number): void;
@@ -306,8 +310,10 @@ export function createGameScene(palette: Palette): GameScene {
   };
 
   const syncEntities = (view: ViewState): void => {
+    const here = entitiesHere(view);
+    const drawn = new Set(here.map((entity) => entity.id));
     for (const [id, mesh] of entityMeshes) {
-      if (view.entities[id]) continue;
+      if (drawn.has(id)) continue;
       actors.remove(mesh);
       mesh.material.dispose();
       entityMeshes.delete(id);
@@ -315,7 +321,7 @@ export function createGameScene(palette: Palette): GameScene {
       collapsing.delete(id);
       homes.delete(id);
     }
-    for (const entity of Object.values(view.entities)) {
+    for (const entity of here) {
       let mesh = entityMeshes.get(entity.id);
       if (!mesh) {
         mesh = new Mesh(

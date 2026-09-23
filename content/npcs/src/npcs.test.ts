@@ -25,6 +25,8 @@ import {
   MERCHANT,
   MERCHANT_ID,
   NPC_ARCHETYPES,
+  POSTERN_LANE,
+  POSTERN_LANE_MAP_ID,
   SCENE,
   SCOUT,
   SCOUT_ID,
@@ -34,6 +36,7 @@ import {
   dispositionToward,
   gatehouseMap,
   gatehouseSnapshot,
+  posternLaneMap,
   isDisposition,
   npcEntity,
   npcGoals,
@@ -90,8 +93,50 @@ describe('gatehouse content', () => {
     const m0 = fixtureSnapshot();
     expect(() => assertSnapshot(m0)).not.toThrow();
     expect(Object.keys(m0.world.maps)).toEqual(['m0-yard']);
-    expect(Object.keys(gatehouseSnapshot().world.maps)).toEqual([GATEHOUSE_MAP_ID]);
+    expect(Object.keys(gatehouseSnapshot().world.maps).sort()).toEqual(
+      [GATEHOUSE_MAP_ID, POSTERN_LANE_MAP_ID].sort(),
+    );
+    expect(Object.keys(gatehouseSnapshot({ neighbours: false }).world.maps)).toEqual([
+      GATEHOUSE_MAP_ID,
+    ]);
     expect(GATEHOUSE_MAP_ID).not.toBe('m0-yard');
+  });
+
+  /**
+   * The lane is test terrain for `traverse` (ALE-43), and the one thing it has to get right is
+   * the pairing: an exit whose far side does not lead back is a one-way door into a room with no
+   * handle. Checked here rather than trusted, because both halves are hand-authored JSON.
+   */
+  it('pairs every exit with a way back', () => {
+    const snapshot = gatehouseSnapshot();
+    for (const map of Object.values(snapshot.world.maps)) {
+      for (const exit of map.exits ?? []) {
+        const far = snapshot.world.maps[exit.to];
+        expect(far, `${map.id} exits to a map that is not loaded`).toBeDefined();
+        const cell = far!.cells[exit.entrance.y * far!.width + exit.entrance.x];
+        expect(cell?.walkable, `${map.id} -> ${exit.to} comes out somewhere unwalkable`).toBe(true);
+        const back = (far!.exits ?? []).find((e) => e.to === map.id);
+        expect(back, `${exit.to} has no way back to ${map.id}`).toBeDefined();
+        expect(back!.at).toEqual(exit.entrance);
+        expect(back!.entrance).toEqual(exit.at);
+        // You leave from somewhere you can stand.
+        const from = map.cells[exit.at.y * map.width + exit.at.x];
+        expect(from?.walkable, `${map.id} exits from an unwalkable tile`).toBe(true);
+      }
+    }
+  });
+
+  it('authors the postern lane as terrain and nothing else', () => {
+    const lane = posternLaneMap();
+    expect(lane.id).toBe(POSTERN_LANE_MAP_ID);
+    expect(lane.cells).toHaveLength(lane.width * lane.height);
+    expect(lane.height).toBe(POSTERN_LANE.rows.length);
+    // Nobody lives there: it is somewhere to walk to, and populating it is `spawn`'s job.
+    const snapshot = gatehouseSnapshot();
+    const onLane = Object.values(snapshot.entities).filter(
+      (e) => e.components.position?.map === POSTERN_LANE_MAP_ID,
+    );
+    expect(onLane).toEqual([]);
   });
 });
 

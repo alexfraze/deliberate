@@ -1,0 +1,21 @@
+{
+  "mapId": "m1-postern-lane",
+  "name": "The postern lane",
+  "rows": [
+    "#.########",
+    "#........#",
+    "#.######.#",
+    "#.#....#.#",
+    "#.#.##.#.#",
+    "#...##...#",
+    "##########"
+  ],
+  "exits": [
+    {
+      "at": { "x": 1, "y": 0 },
+      "to": "m1-gatehouse",
+      "entrance": { "x": 1, "y": 10 },
+      "label": "the gatehouse yard"
+    }
+  ]
+}

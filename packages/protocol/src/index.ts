@@ -56,12 +56,34 @@ export interface TileCell {
   walkable: boolean;
 }
 
+/**
+ * A way off one map and onto another (ALE-43). Stand on `at`, `traverse`, arrive on `entrance`
+ * of map `to`. One-way as written: a door you can walk back through is two exits, one on each
+ * map, and the pair is what makes the link consistent. Terrain only — an exit says nothing about
+ * whether it is locked, which is a flag and a rule, not a shape.
+ */
+export interface MapExit {
+  /** Tile on THIS map the traveller must be standing on. */
+  at: Tile;
+  /** Map the exit leads to. Must be loaded in `World.maps` before it can be used. */
+  to: MapId;
+  /** Tile on the destination map the traveller arrives on. Must be walkable and unoccupied. */
+  entrance: Tile;
+  /** What a player would call it ("the postern lane"). Used in verdicts and hints. */
+  label?: string;
+}
+
 /** A loaded map. `cells` is row-major, length = width * height. */
 export interface MapRecord {
   id: MapId;
   width: number;
   height: number;
   cells: TileCell[];
+  /**
+   * Ways off this map (ALE-43). Optional and omitted when there are none, so every map authored
+   * before map transitions existed hashes and replays exactly as it did before.
+   */
+  exits?: MapExit[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -227,6 +249,26 @@ export interface EntityMoved {
   path: Tile[];
 }
 
+/**
+ * An entity crossed from one map to another through an exit (ALE-43).
+ *
+ * Deliberately not an `EntityMoved` with a map on it. A move is a walk across tiles the renderer
+ * tweens along a path; a crossing is a cut — the board it was standing on is replaced. Giving it
+ * its own diff is what lets the client swap the rendered map instead of sliding a capsule across
+ * coordinates that now mean somewhere else. Absolute like every other diff: it carries both ends,
+ * so folding it twice lands where folding it once did.
+ */
+export interface EntityTraversed {
+  type: 'EntityTraversed';
+  entity: EntityId;
+  /** Map left behind, and the tile the exit was on. */
+  fromMap: MapId;
+  from: Tile;
+  /** Map arrived on, and the entrance tile stood on. */
+  toMap: MapId;
+  to: Tile;
+}
+
 export interface DamageApplied {
   type: 'DamageApplied';
   target: EntityId;
@@ -324,6 +366,7 @@ export interface QuestAdvanced {
 
 export type Diff =
   | EntityMoved
+  | EntityTraversed
   | DamageApplied
   | ConditionSet
   | DialogueLine
@@ -339,6 +382,7 @@ export type DiffType = Diff['type'];
 
 export const DIFF_TYPES: readonly DiffType[] = [
   'EntityMoved',
+  'EntityTraversed',
   'DamageApplied',
   'ConditionSet',
   'DialogueLine',
@@ -359,6 +403,25 @@ export interface MoveIntent {
   kind: 'move';
   entity: EntityId;
   to: Tile;
+}
+
+/**
+ * Walk off one map and onto another through an exit (ALE-43).
+ *
+ * Deliberately not `move` with a map argument. `move` is "walk to that tile", validated against a
+ * path across one grid; there is no path between two grids, so a crossing has nothing in common
+ * with it but the word. It is validated like any other action — the exit has to be under your
+ * feet, the far side has to exist, its entrance has to be walkable and empty, and in an encounter
+ * it has to be your turn — and refused with a sentence a player can read.
+ *
+ * It needs no model: both maps already exist. Authoring the far side before you arrive is the
+ * game master's job (ALE-44) and a separate verb.
+ */
+export interface TraverseIntent {
+  kind: 'traverse';
+  entity: EntityId;
+  /** Which map to leave for; `null` takes the only exit on the tile the entity stands on. */
+  to: MapId | null;
 }
 
 export interface AttackIntent {
@@ -461,13 +524,15 @@ export interface PassTimeIntent {
 
 /**
  * Everything the engine can be asked to do. M0 shipped `move`, `attack` and `end_turn`; ALE-31
- * added the rest for the GM's mutation tools, and ALE-41 added `pass_time`. The addition is
+ * added the rest for the GM's mutation tools, ALE-41 added `pass_time` and ALE-43 added
+ * `traverse`. The addition is
  * additive: each new kind is a new member of the union, no existing member changed, and every GM
  * mutation tool maps onto exactly one of these — a tool call is not a second way into the store,
  * it is the same validated path the player's UI uses.
  */
 export type Intent =
   | MoveIntent
+  | TraverseIntent
   | AttackIntent
   | EndTurnIntent
   | PassTimeIntent

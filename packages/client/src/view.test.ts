@@ -33,7 +33,14 @@ describe('viewFromSnapshot', () => {
     const ghost: Entity = { id: 'ghost', name: 'Ghost', components: {} };
     snapshot.entities.ghost = ghost;
     expect(viewFromSnapshot(snapshot).entities.ghost).toBeUndefined();
-    expect(emptyView()).toEqual({ mapId: null, map: null, entities: {}, initiative: null });
+    expect(emptyView()).toEqual({
+      mapId: null,
+      map: null,
+      maps: {},
+      player: null,
+      entities: {},
+      initiative: null,
+    });
   });
 });
 

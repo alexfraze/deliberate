@@ -2,7 +2,7 @@
  * Click handling as a pure state machine, so the rules ("entity then tile is a move, entity then
  * entity is an attack") are testable without a canvas.
  */
-import type { EntityId, Intent, Tile } from '@deliberate/protocol';
+import type { EntityId, Intent, MapExit, MapRecord, Tile } from '@deliberate/protocol';
 
 /** The only ability M0 sends; the engine resolves it against the trimmed SRD weapon table. */
 export const DEFAULT_ABILITY = 'longsword';
@@ -18,15 +18,34 @@ export interface SelectionResult {
 }
 
 /**
+ * Where the selected entity is standing and what map it is standing on, so a click can tell a
+ * door from a floor tile (ALE-43). Optional: without it a click behaves exactly as it did before
+ * maps had exits, which is what every existing caller and test expects.
+ */
+export interface PickWorld {
+  at: Tile | null;
+  map: MapRecord | null;
+}
+
+/**
  * Given what is selected and what was clicked, decide the next selection and the intent (if any).
  *
  * - empty space clears the selection
  * - clicking an entity with nothing selected selects it
  * - clicking the selected entity again deselects it
+ * - selected entity + the tile it is standing on, when that tile is an exit -> traverse
  * - selected entity + tile -> move
  * - selected entity + another entity -> attack
+ *
+ * Clicking the tile you are already standing on used to be the one click that could only ever be
+ * refused ("is already there"). On an exit it is now the click that takes it, which is why a
+ * doorway needs no button of its own.
  */
-export function resolvePick(selected: EntityId | null, pick: Pick): SelectionResult {
+export function resolvePick(
+  selected: EntityId | null,
+  pick: Pick,
+  world?: PickWorld,
+): SelectionResult {
   if (pick.kind === 'none') {
     return { selected: null, intent: null, hint: selected ? 'Selection cleared.' : null };
   }
@@ -46,9 +65,25 @@ export function resolvePick(selected: EntityId | null, pick: Pick): SelectionRes
   if (selected === null) {
     return { selected: null, intent: null, hint: 'Select an entity first.' };
   }
+  const standing = world?.at;
+  if (standing && standing.x === pick.tile.x && standing.y === pick.tile.y) {
+    const exit = exitAt(world?.map ?? null, pick.tile);
+    if (exit) {
+      return {
+        selected,
+        intent: { kind: 'traverse', entity: selected, to: exit.to },
+        hint: `Taking ${exit.label ?? exit.to}…`,
+      };
+    }
+  }
   return {
     selected,
     intent: { kind: 'move', entity: selected, to: { x: pick.tile.x, y: pick.tile.y } },
     hint: `Moving to (${pick.tile.x}, ${pick.tile.y})…`,
   };
+}
+
+/** The first exit standing on `tile`, or null. The engine validates it; this only composes it. */
+export function exitAt(map: MapRecord | null, tile: Tile): MapExit | null {
+  return (map?.exits ?? []).find((exit) => exit.at.x === tile.x && exit.at.y === tile.y) ?? null;
 }

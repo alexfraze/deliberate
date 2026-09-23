@@ -10,6 +10,7 @@ import {
   type MoveIntent,
   type PassTimeIntent,
   type Snapshot,
+  type TraverseIntent,
   type Tile,
   type Verdict,
 } from '@deliberate/protocol';
@@ -44,6 +45,7 @@ import {
 } from './context.js';
 import { advanceTurn, economyOf, freshEconomy, rollInitiative } from './initiative.js';
 import { createRng } from './rng.js';
+import { applyTraverse } from './traverse.js';
 import { inRange, WEAPON_ACTION, type AttackAction, type Weapon } from './weapons.js';
 
 /**
@@ -52,6 +54,8 @@ import { inRange, WEAPON_ACTION, type AttackAction, type Weapon } from './weapon
  *
  * Rules (SRD 5.1 trimmed, see the rules/ modules):
  * - Exploration until the first attack: anyone alive may move up to their speed per intent.
+ * - A `traverse` walks through an exit onto another loaded map, for one tile's worth of movement.
+ *   Walking between maps is the one movement a path cannot express; see rules/traverse.ts.
  * - An attack starts an encounter: initiative is rolled for every combatant and the attacker acts
  *   first in round 1 (the ambush). From then on only the entity at `initiative.current` may act,
  *   with one move (speed in feet, spendable in pieces), one action, and one bonus action per
@@ -74,6 +78,8 @@ export function createEngine(initial: Snapshot, options: EngineOptions): Engine 
       switch (intent.kind) {
         case 'move':
           return applyMove(ctx, intent);
+        case 'traverse':
+          return applyTraverse(ctx, intent);
         case 'attack':
           return applyAttack(ctx, intent);
         case 'end_turn':

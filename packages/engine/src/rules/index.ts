@@ -25,6 +25,7 @@ export {
   describeTile,
   isVerdict,
   occupiedTiles,
+  defaultMap,
   reject,
   soleMap,
   type Actor,
@@ -50,6 +51,13 @@ export {
   type TurnAdvance,
 } from './initiative.js';
 export { createRng, type Rng } from './rng.js';
+export {
+  applyTraverse,
+  checkTraverse,
+  exitsAt,
+  TRAVERSE_COST_FT,
+  type TraverseCheck,
+} from './traverse.js';
 export {
   attackAbility,
   getWeapon,
