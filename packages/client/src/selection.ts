@@ -33,13 +33,17 @@ export interface PickWorld {
  * - empty space clears the selection
  * - clicking an entity with nothing selected selects it
  * - clicking the selected entity again deselects it
- * - selected entity + the tile it is standing on, when that tile is an exit -> traverse
+ * - selected entity + its own square, when there is an exit under it -> traverse
  * - selected entity + tile -> move
  * - selected entity + another entity -> attack
  *
- * Clicking the tile you are already standing on used to be the one click that could only ever be
- * refused ("is already there"). On an exit it is now the click that takes it, which is why a
- * doorway needs no button of its own.
+ * Clicking the square you are already standing on used to be the one click that could only ever
+ * be refused ("is already there") or undo your selection. On an exit it is the click that takes
+ * the door, which is why a doorway needs no button of its own.
+ *
+ * Your own square is checked before anything else because a click on it lands on your *capsule*,
+ * not on the floor — found by playing, when the second click on the postern deselected the player
+ * instead of walking them through it.
  */
 export function resolvePick(
   selected: EntityId | null,
@@ -48,6 +52,17 @@ export function resolvePick(
 ): SelectionResult {
   if (pick.kind === 'none') {
     return { selected: null, intent: null, hint: selected ? 'Selection cleared.' : null };
+  }
+  if (selected !== null && world?.at && world.at.x === pick.tile.x && world.at.y === pick.tile.y) {
+    const exit = exitAt(world.map, pick.tile);
+    // Your own square, with a way off the map under it — whether the ray hit the floor or you.
+    if (exit && (pick.kind === 'tile' || pick.id === selected)) {
+      return {
+        selected,
+        intent: { kind: 'traverse', entity: selected, to: exit.to },
+        hint: `Taking ${exit.label ?? exit.to}…`,
+      };
+    }
   }
   if (pick.kind === 'entity') {
     if (selected === null) {
@@ -64,17 +79,6 @@ export function resolvePick(
   }
   if (selected === null) {
     return { selected: null, intent: null, hint: 'Select an entity first.' };
-  }
-  const standing = world?.at;
-  if (standing && standing.x === pick.tile.x && standing.y === pick.tile.y) {
-    const exit = exitAt(world?.map ?? null, pick.tile);
-    if (exit) {
-      return {
-        selected,
-        intent: { kind: 'traverse', entity: selected, to: exit.to },
-        hint: `Taking ${exit.label ?? exit.to}…`,
-      };
-    }
   }
   return {
     selected,

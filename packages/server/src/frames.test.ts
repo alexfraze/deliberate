@@ -184,3 +184,33 @@ describe('pass_time on the wire (ALE-41)', () => {
     }
   });
 });
+
+describe('traverse on the wire (ALE-43)', () => {
+  it('is a player intent: walking through a door is movement', () => {
+    for (const to of [null, 'm1-postern-lane']) {
+      const result = parseClientFrame(
+        JSON.stringify({
+          type: 'intent',
+          room: 'main',
+          turn: 0,
+          intent: { kind: 'traverse', entity: 'player', to },
+        }),
+      );
+      expect(result.ok, JSON.stringify(to)).toBe(true);
+    }
+  });
+
+  it('refuses one with nobody walking, or a destination that is not an id', () => {
+    for (const intent of [
+      { kind: 'traverse', to: null },
+      { kind: 'traverse', entity: 'player' },
+      { kind: 'traverse', entity: 'player', to: 7 },
+      { kind: 'traverse', entity: 'player', to: '' },
+    ]) {
+      const result = parseClientFrame(
+        JSON.stringify({ type: 'intent', room: 'main', turn: 0, intent }),
+      );
+      expect(result, JSON.stringify(intent)).toMatchObject({ ok: false });
+    }
+  });
+});

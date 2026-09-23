@@ -39,9 +39,10 @@ commits only if it matches.
 | `go`              | `room`, `turn`                    | Commit the last preview.                                     |
 | `speculate`       | `room`, `turn`, `intent`          | Warm the preview cache for an action being hovered (ALE-40). |
 
-`intent` is one of `move { entity, to }`, `attack { attacker, target, ability }`,
-`cast { caster, spell, target }`, `say { speaker, text, to }`, `end_turn { entity }`,
-`pass_time { entity }` — the things a player does. The four **world-authoring** intent kinds (`set_disposition`, `spawn`, `set_flag`,
+`intent` is one of `move { entity, to }`, `traverse { entity, to }`,
+`attack { attacker, target, ability }`, `cast { caster, spell, target }`,
+`say { speaker, text, to }`, `end_turn { entity }`, `pass_time { entity }` — the things a player
+does. The four **world-authoring** intent kinds (`set_disposition`, `spawn`, `set_flag`,
 `advance_quest`, ALE-31) do not travel on this socket: they arrive as tool calls on
 `POST /gm/tool`, where the engine validates them against `contracts/gm-tools.json`.
 
@@ -51,6 +52,14 @@ running; there is no turn to end."_ — while `pass_time` needs there not to be 
 world clock on by a round and changes nothing else; what makes it interesting is what the server
 does **after** it commits, which is give the world an [ambient turn](gm-service.md#the-ambient-world-turn-ale-41).
 It is a player verb and not a game master tool, so nothing but a person can decide to spend time.
+
+`traverse` (ALE-43) walks off one map and onto another through an exit the destination map carries
+a matching entrance for. `to` names the map to leave for, or is `null` to take the only exit on the
+tile the entity is standing on. It is deliberately not `move` with a map argument — there is no
+path between two grids — and it is validated the same way a door is: the exit under your feet, the
+far side loaded, its entrance walkable and empty, your turn if there is one. It emits
+`EntityTraversed`, which carries both ends of the crossing so a client can swap the board it draws
+rather than sliding a capsule across coordinates that now mean somewhere else.
 
 The split is about authority, not shape. The engine validates whether a `spawn` names a real
 template; it has no idea who asked, by design. So the wire is where "a person at a keyboard may not
@@ -138,18 +147,18 @@ Nothing off the wire is trusted. `parseClientFrame` validates a frame completely
 the engine sees it; the room then checks the room id, membership and the turn; only then does the
 engine see the intent, and the engine validates legality itself. Each row below is an `error`.
 
-| Condition                                     | Reason the client gets                                                                          |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Frame is not JSON, or not a JSON object       | "That frame was not valid JSON." / "…must be a JSON object."                                    |
-| Missing or non-string `room`                  | "That frame is missing a room id."                                                              |
-| `type` is not a known frame type              | "Unknown frame type …"                                                                          |
-| `join` with the wrong `protocol`              | "This server speaks protocol N; your client said M…"                                            |
-| `intent` with a missing or non-integer `turn` | "An intent must carry the turn number it was composed against."                                 |
-| `intent` whose `intent` is not a player one   | "That is not an action this server understands (move, attack, cast, say, end_turn, pass_time)." |
-| `room` is not this server's room              | "There is no room called "x" on this server."                                                   |
-| `intent` from a socket that never joined      | "Join the room before sending an action."                                                       |
-| `turn` ≠ the room's turn                      | "That action was composed for turn N; the room is on turn M…" plus a `snapshot`                 |
-| The engine rejects the intent                 | `Verdict.reason`, unchanged                                                                     |
+| Condition                                     | Reason the client gets                                                                                    |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Frame is not JSON, or not a JSON object       | "That frame was not valid JSON." / "…must be a JSON object."                                              |
+| Missing or non-string `room`                  | "That frame is missing a room id."                                                                        |
+| `type` is not a known frame type              | "Unknown frame type …"                                                                                    |
+| `join` with the wrong `protocol`              | "This server speaks protocol N; your client said M…"                                                      |
+| `intent` with a missing or non-integer `turn` | "An intent must carry the turn number it was composed against."                                           |
+| `intent` whose `intent` is not a player one   | "That is not an action this server understands (move, traverse, attack, cast, say, end_turn, pass_time)." |
+| `room` is not this server's room              | "There is no room called "x" on this server."                                                             |
+| `intent` from a socket that never joined      | "Join the room before sending an action."                                                                 |
+| `turn` ≠ the room's turn                      | "That action was composed for turn N; the room is on turn M…" plus a `snapshot`                           |
+| The engine rejects the intent                 | `Verdict.reason`, unchanged                                                                               |
 
 An `error` never advances the turn and never mutates state. A malformed frame does not close the
 socket; the next well-formed frame is handled normally.

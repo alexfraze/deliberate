@@ -10,7 +10,6 @@ import {
   type MoveIntent,
   type PassTimeIntent,
   type Snapshot,
-  type TraverseIntent,
   type Tile,
   type Verdict,
 } from '@deliberate/protocol';

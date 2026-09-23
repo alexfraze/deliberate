@@ -2,7 +2,14 @@ import type { Diff, Entity } from '@deliberate/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { fixtureSnapshot } from './fixtures/index.js';
-import { applyDiffToView, applyDiffsToView, emptyView, isAlive, viewFromSnapshot } from './view.js';
+import {
+  applyDiffToView,
+  applyDiffsToView,
+  emptyView,
+  entitiesHere,
+  isAlive,
+  viewFromSnapshot,
+} from './view.js';
 
 describe('viewFromSnapshot', () => {
   it('keeps only what a frame needs, and finds the map', () => {
@@ -41,6 +48,75 @@ describe('viewFromSnapshot', () => {
       entities: {},
       initiative: null,
     });
+  });
+});
+
+/**
+ * ALE-43: the crossing the renderer has to be able to tell from a walk. What the client draws is
+ * wherever the player character is standing, and everyone left behind stops being drawn without
+ * being forgotten — the initiative panel still has to be able to name them.
+ */
+describe('crossing between maps', () => {
+  function twoMaps() {
+    const snapshot = fixtureSnapshot();
+    snapshot.world.maps['m0-cellar'] = {
+      id: 'm0-cellar',
+      width: 2,
+      height: 2,
+      cells: Array.from({ length: 4 }, () => ({ elevation: 0, walkable: true })),
+    };
+    return snapshot;
+  }
+
+  const crossing: Diff = {
+    type: 'EntityTraversed',
+    entity: 'player',
+    fromMap: 'm0-yard',
+    from: { x: 2, y: 2 },
+    toMap: 'm0-cellar',
+    to: { x: 1, y: 1 },
+  };
+
+  it('renders the map the player character is standing on', () => {
+    const view = viewFromSnapshot(twoMaps());
+    expect(view.player).toBe('player');
+    expect(view.mapId).toBe('m0-yard');
+    expect(Object.keys(view.maps).sort()).toEqual(['m0-cellar', 'm0-yard']);
+    expect(
+      entitiesHere(view)
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual(['dummy-a', 'dummy-b', 'player']);
+  });
+
+  it('swaps the board when the player crosses, and leaves the cast behind', () => {
+    const view = viewFromSnapshot(twoMaps());
+    applyDiffToView(view, crossing);
+    expect(view.mapId).toBe('m0-cellar');
+    expect(view.map?.width).toBe(2);
+    expect(view.entities.player).toMatchObject({ map: 'm0-cellar', tile: { x: 1, y: 1 } });
+    // Left behind, not forgotten: still in `entities`, simply not on this board.
+    expect(entitiesHere(view).map((e) => e.id)).toEqual(['player']);
+    expect(view.entities['dummy-a']?.map).toBe('m0-yard');
+  });
+
+  it('does not swap the board when somebody else crosses', () => {
+    const view = viewFromSnapshot(twoMaps());
+    applyDiffToView(view, { ...crossing, entity: 'dummy-a' });
+    expect(view.mapId).toBe('m0-yard');
+    expect(view.entities['dummy-a']?.map).toBe('m0-cellar');
+    expect(
+      entitiesHere(view)
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual(['dummy-b', 'player']);
+  });
+
+  it('is absolute: folding the same crossing twice lands where once did', () => {
+    const view = viewFromSnapshot(twoMaps());
+    applyDiffsToView(view, [crossing, crossing]);
+    expect(view.mapId).toBe('m0-cellar');
+    expect(view.entities.player).toMatchObject({ map: 'm0-cellar', tile: { x: 1, y: 1 } });
   });
 });
 

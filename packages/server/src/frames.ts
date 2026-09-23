@@ -47,8 +47,11 @@ function isTile(value: unknown): value is Tile {
  * ALE-41 added `pass_time`, and it belongs on this side of the line for the same reason: it is the
  * player deciding to spend a moment. It is deliberately *not* a game master tool, so the world
  * cannot skip its own time — only a person can.
+ *
+ * ALE-43 added `traverse`, which is movement: the player walks through a door. It is on this side
+ * of the line exactly as `move` is, and the engine decides whether the door is there.
  */
-const PLAYER_INTENTS = 'move, attack, cast, say, end_turn, pass_time';
+const PLAYER_INTENTS = 'move, traverse, attack, cast, say, end_turn, pass_time';
 
 export function isIntent(value: unknown): value is Intent {
   if (!isRecord(value)) return false;
@@ -60,6 +63,10 @@ export function isIntent(value: unknown): value is Intent {
     case 'end_turn':
     case 'pass_time':
       return isId(value['entity']);
+    case 'traverse': {
+      const to = value['to'];
+      return isId(value['entity']) && (to === null || isId(to));
+    }
     case 'cast':
       return isId(value['caster']) && isId(value['spell']) && isId(value['target']);
     case 'say': {
