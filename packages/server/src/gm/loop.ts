@@ -71,10 +71,29 @@ import { executeGmToolRequest, type GmToolDeps } from './tool.js';
  * leaves open are ended by the server, so a silent model cannot stall the encounter forever.
  */
 
-/** Phase budgets from docs/blueprint.md. Structure, not micro-optimisation: nothing may hang. */
-export const PREVIEW_BUDGET_MS = 8_000;
-export const RESOLVE_BUDGET_MS = 6_000;
-export const NARRATE_BUDGET_MS = 3_000;
+/**
+ * The blueprint's MVP latency goals. These are **targets**, not timeouts: what the loop should
+ * cost once the structural work lands. Nothing reads them at runtime, and nothing should — they
+ * are here to be measured against by `pnpm meters`, and to be argued with.
+ */
+export const PREVIEW_TARGET_MS = 8_000;
+export const RESOLVE_TARGET_MS = 6_000;
+export const NARRATE_TARGET_MS = 3_000;
+
+/**
+ * Abort ceilings: the point at which we conclude a phase has **hung**, not the point at which it
+ * is disappointing. These were once the same constants as the targets above, which meant the
+ * server refused to do what it could actually do in service of a number it could not yet hit —
+ * an 8 s ceiling against a measured 27–30 s preview p50 aborted essentially every real call, and
+ * a fresh clone could not preview at all without environment overrides.
+ *
+ * Set from measured reality with headroom over p95 (preview 27–30 s p50, after-GO p95 ~27 s as of
+ * ALE-25/ALE-41). Tighten them as the loop genuinely gets faster — the targets above are the
+ * scoreboard for that, and `GM_*_BUDGET_MS` still overrides each one for tuning.
+ */
+export const PREVIEW_BUDGET_MS = 150_000;
+export const RESOLVE_BUDGET_MS = 180_000;
+export const NARRATE_BUDGET_MS = 60_000;
 
 /** Hard stop on NPC turns resolved in one GO, so a loop in the world cannot become a loop here. */
 const MAX_NPC_TURNS = 12;
