@@ -274,8 +274,12 @@ function m4Evidence(lines: RecordingLine[]): M4Evidence {
     }
     // A turn the game master caused on behalf of somebody standing in an authored location. Out
     // of an encounter that is an ambient turn by definition: nothing else moves an NPC.
+    //
+    // `spawn` is excluded, and the exclusion is the whole point of the measurement: putting
+    // somebody on a map is not that person doing anything, and counting it would let a settler
+    // who stood mute for the rest of the session read as one who acted.
     for (const call of turn.toolCalls) {
-      if (!call.verdict.ok) continue;
+      if (!call.verdict.ok || call.name === 'spawn') continue;
       for (const id of settlers.map((s) => s.id)) {
         if (Object.values(call.args).includes(id) && authored.includes(standing.get(id) ?? ''))
           stirred.add(id);
