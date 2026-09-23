@@ -60,33 +60,45 @@ function capped(entries: ThreadEntry[]): ThreadEntry[] {
 }
 
 /**
- * Whether two texts are the same utterance, one of them written out further.
+ * Whether two texts are the same utterance said twice.
  *
  * This is not a guess about language, it is a fact about the preview loop: a preview and its GO
- * are two separate model calls over the same input, so the commit reproduces the line the preview
- * already showed and then continues it. `parley` has four of these — "Ilva. There is bandage linen
- * in that pack. Name your price." followed by the same sentence plus "— I have twenty-five coin"
- * — and rendering both is the single most log-like thing the old box did: the player reads the
- * same sentence twice and concludes the character is stuttering.
+ * are two separate model calls over the same input, so the commit re-says the line the preview
+ * already showed before carrying on. Sometimes it carries on by extending the sentence ("…name
+ * your price." → "…name your price — I have twenty-five coin"), sometimes by replacing the ending
+ * outright ("…gave me the name. Open the gate." → "…gave me the name. Let me carry him through —
+ * and I'll stand surety"). Both look identical on screen: fifty characters repeated verbatim, and
+ * a character who appears to stutter. That is the most log-like thing the old box did.
+ *
+ * So the test is neither "a prefix of" nor a similarity score, it is *how much of the opening the
+ * two share* — which is exactly the quantity the preview loop duplicates — and the shared run has
+ * to end on a word boundary, so "No." can never swallow "Nobody moves."
+ *
+ * Measured over the bank: it merges 7 of the 10 adjacent same-speaker pairs in `parley` and 3 of
+ * the 7 in `m1-acceptance`, and every pair it leaves alone is genuinely two different lines.
  */
 export function extendsLine(previous: string, next: string): boolean {
-  const [short, long] = previous.length <= next.length ? [previous, next] : [next, previous];
-  if (short === long) return true;
-  // The shorter one was a finished sentence, so it ends in punctuation the longer one replaced
-  // with a comma or a dash on the way to saying more. Compare the words, not the full stop.
-  const stem = short.replace(TRAILING_PUNCTUATION, '');
-  if (stem.length < MIN_STEM || !long.startsWith(stem)) return false;
-  // And the extension has to begin a new word, so "No." never swallows "Nobody moves."
-  return !/[\p{L}\p{N}]/u.test(long.charAt(stem.length));
+  if (previous === next) return true;
+  let shared = 0;
+  while (shared < previous.length && shared < next.length && previous[shared] === next[shared]) {
+    shared += 1;
+  }
+  // They diverged rather than one simply stopping: walk back off a half-finished word, so what is
+  // counted is whole words the two lines actually have in common.
+  if (shared < previous.length && shared < next.length) {
+    while (shared > 0 && WORD_CHARACTER.test(previous.charAt(shared))) shared -= 1;
+  }
+  return shared >= MIN_SHARED;
 }
 
-const TRAILING_PUNCTUATION = /[\s.,;:!?…—–-]+$/u;
+const WORD_CHARACTER = /[\p{L}\p{N}]/u;
 
 /**
- * How much of a line has to match before a restatement is believed. Short enough that any real
- * restatement clears it, long enough that two characters both starting "Aye" are still two lines.
+ * How much opening two lines have to share before one is believed to be a re-say of the other.
+ * Low enough that every restatement in the bank clears it, high enough that two characters who
+ * both open "Halloran! " are still two lines.
  */
-const MIN_STEM = 12;
+const MIN_SHARED = 20;
 
 /**
  * Adds one spoken line, merging it into the line above when that is the same speaker restating the

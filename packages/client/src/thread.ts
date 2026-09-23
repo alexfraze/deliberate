@@ -99,6 +99,13 @@ export function createDialogueThread(
   let entries: ThreadEntry[] = [];
   let palette: Palette | null = null;
   let collapsed = false;
+  /**
+   * Whether the reader is following the conversation. Deliberately a remembered intent rather than
+   * a measurement taken while painting: growing the content moves the bottom away without firing a
+   * scroll event, so a thread that measured itself mid-append would decide the reader had scrolled
+   * back when all that happened was that somebody said something.
+   */
+  let following = true;
   /** The node drawn for each entry key, and the text it currently shows. */
   const drawn = new Map<number, { node: HTMLElement; body: HTMLElement; text: string }>();
 
@@ -106,6 +113,7 @@ export function createDialogueThread(
     list.scrollHeight - list.scrollTop - list.clientHeight <= STICK_SLOP;
 
   const toBottom = (): void => {
+    following = true;
     list.scrollTop = list.scrollHeight;
     jump.hidden = true;
   };
@@ -168,7 +176,6 @@ export function createDialogueThread(
   }
 
   const paint = (): void => {
-    const wasFollowing = atBottom();
     const live = new Set(entries.map((entry) => entry.key));
     for (const [key, held] of drawn) {
       if (live.has(key)) continue;
@@ -200,7 +207,7 @@ export function createDialogueThread(
       options.onLayout();
     }
     paintTitle();
-    if (wasFollowing) toBottom();
+    if (following) toBottom();
     else jump.hidden = false;
   };
 
@@ -209,8 +216,11 @@ export function createDialogueThread(
     paint();
   };
 
+  // The only thing that stops the thread following is the reader scrolling away from the bottom,
+  // and the only things that resume it are scrolling back or the button.
   list.addEventListener('scroll', () => {
-    if (atBottom()) jump.hidden = true;
+    following = atBottom();
+    if (following) jump.hidden = true;
   });
   jump.addEventListener('click', toBottom);
   title.addEventListener('click', () => {
@@ -235,8 +245,10 @@ export function createDialogueThread(
       speaker,
       name: who.name,
       faction: who.faction,
-      // "→ you" rather than the player's own name: from this side of the screen that is what it is.
-      to: target === null ? null : target.faction === SELF_FACTION ? 'you' : target.name,
+      // Named only when the line went to somebody who is not you. Almost everything said in a
+      // parley is said to you, so "→ you" on every second entry is noise that hides the one fact
+      // worth having: the moment a character turns and shouts at somebody else.
+      to: target === null || target.faction === SELF_FACTION ? null : target.name,
       text,
       self,
       pending,

@@ -40,29 +40,58 @@ describe('appendSpeech', () => {
    */
   it('merges a restated line into the one above it, keeping the finished thought', () => {
     let thread: ThreadEntry[] = [];
-    thread = appendSpeech(thread, line('player', 'Ilva. Name your price.'));
     thread = appendSpeech(
       thread,
-      line('player', 'Ilva. Name your price — I have twenty-five coin.'),
+      line('player', 'There is bandage linen in that pack. Name your price.'),
     );
-    expect(texts(thread)).toEqual(['Ilva. Name your price — I have twenty-five coin.']);
+    thread = appendSpeech(
+      thread,
+      line(
+        'player',
+        'There is bandage linen in that pack. Name your price — I have twenty-five coin.',
+      ),
+    );
+    expect(texts(thread)).toEqual([
+      'There is bandage linen in that pack. Name your price — I have twenty-five coin.',
+    ]);
     expect(thread[0]?.key).toBe(1);
   });
 
-  it('merges when the restatement is the shorter of the two', () => {
+  /**
+   * The same defect, in the shape the merge rule used to miss: the commit does not extend the
+   * preview's sentence, it replaces the ending. Fifty characters still arrive on screen twice.
+   */
+  it('merges a re-say that replaces the ending rather than extending it', () => {
+    let thread = appendSpeech(
+      [],
+      line('player', 'Ilva will vouch for me. Brannoc gave me the name. Open the gate.'),
+    );
+    thread = appendSpeech(
+      thread,
+      line(
+        'player',
+        "Ilva will vouch for me. Brannoc gave me the name. Let me carry him through — and I'll stand surety for him myself.",
+      ),
+    );
+    expect(texts(thread)).toEqual([
+      "Ilva will vouch for me. Brannoc gave me the name. Let me carry him through — and I'll stand surety for him myself.",
+    ]);
+  });
+
+  it('merges when the restatement is the shorter of the two, keeping the longer', () => {
     let thread = appendSpeech([], line('ilva', 'Twenty-five for linen. That is robbery.'));
     thread = appendSpeech(thread, line('ilva', 'Twenty-five for linen.'));
     expect(texts(thread)).toEqual(['Twenty-five for linen. That is robbery.']);
   });
 
   it('does not merge across speakers, or two different lines from one speaker', () => {
-    let thread = appendSpeech([], line('halloran', 'Gate is sealed.'));
-    thread = appendSpeech(thread, line('ilva', 'Gate is sealed. He means it.'));
-    thread = appendSpeech(thread, line('ilva', 'Bring him a name.'));
+    let thread = appendSpeech([], line('halloran', 'Gate is sealed and stays sealed.'));
+    thread = appendSpeech(thread, line('ilva', 'Gate is sealed and stays sealed. He means it.'));
+    thread = appendSpeech(thread, line('ilva', 'Bring him a name for whoever cut him.'));
     expect(texts(thread)).toEqual([
-      'Gate is sealed.',
-      'Gate is sealed. He means it.',
-      'Bring him a name.',
+      'Gate is sealed and stays sealed.',
+      'Gate is sealed and stays sealed. He means it.',
+      'Bring him a name for whoever cut him.',
     ]);
   });
 
@@ -95,12 +124,31 @@ describe('appendSpeech', () => {
 });
 
 describe('extendsLine', () => {
-  it('is true only for one utterance written out further', () => {
+  it('is true for one utterance said twice, however the second one ends', () => {
     expect(extendsLine('Stand where I can see you', 'Stand where I can see you, friend.')).toBe(
       true,
     );
-    expect(extendsLine('Stand where I can see you.', 'Stand where I can')).toBe(true);
+    expect(extendsLine('Stand where I can see you.', 'Stand where I can see')).toBe(true);
+    expect(
+      extendsLine(
+        'Brannoc gave me the name. Open the gate.',
+        'Brannoc gave me the name. Let me carry him through.',
+      ),
+    ).toBe(true);
+  });
+
+  it('is false for two lines that merely start alike', () => {
     expect(extendsLine('Stand where I can see you.', 'Bring him to the postern.')).toBe(false);
+    expect(extendsLine('No.', 'Nobody moves.')).toBe(false);
+    expect(extendsLine('Halloran! The gate.', 'Halloran! Ilva Sallow, south yard.')).toBe(false);
+    // Seventeen shared characters is a coincidence, not a re-say.
+    expect(extendsLine('Stand where I can see you.', 'Stand where I can hear the rain.')).toBe(
+      false,
+    );
+  });
+
+  it('is true for an identical line however short', () => {
+    expect(extendsLine('Aye.', 'Aye.')).toBe(true);
   });
 });
 

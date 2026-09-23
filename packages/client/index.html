@@ -217,7 +217,11 @@
         position: fixed;
         left: 12px;
         top: 12px;
-        bottom: 156px;
+        /* Height follows the conversation and stops at the HUD readout, which runs to seven lines
+           with a hint and a refusal on it. A ceiling rather than a fixed box: two lines of
+           dialogue should not draw an empty column the height of the screen, and two hundred
+           should not push anything off the bottom of it. */
+        max-height: calc(100vh - 168px);
         width: 340px;
         display: flex;
         flex-direction: column;
@@ -232,12 +236,10 @@
       }
       #initiative:not([hidden]) ~ #dialogue {
         top: 76px;
+        max-height: calc(100vh - 232px);
       }
       /* Collapsed: the header only, so the board can be reclaimed mid-fight without losing the
          conversation. `width()` reports 0 in this state and the board recentres accordingly. */
-      #dialogue.is-collapsed {
-        bottom: auto;
-      }
       #dialogue.is-collapsed .dl-thread-list,
       #dialogue.is-collapsed .dl-thread-jump {
         display: none;
@@ -280,6 +282,7 @@
         background: var(--dl-accent, #9fd0ff);
         border: 0;
         border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
         cursor: pointer;
       }
       /* One spoken line: a portrait slot, the speaker, and what they said. */
@@ -333,9 +336,16 @@
         font-weight: 400;
         color: var(--dl-text-muted, #8496a8);
       }
+      /* inline-block so the bubble hugs what was said rather than the column: a one-line remark
+         reads as a remark. `text-align` is reset inside it because prose is read from the left
+         even when the bubble it sits in is pinned to the right. */
       #dialogue .dl-said {
+        display: inline-block;
+        box-sizing: border-box;
+        max-width: 100%;
         margin: 2px 0 0;
         padding: 5px 8px;
+        text-align: left;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
         border-left: 2px solid var(--dl-speaker, currentColor);
