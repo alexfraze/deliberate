@@ -15,11 +15,11 @@ import { inBounds, isWalkable, tileKey } from '../grid/index.js';
 import { isAlive } from '../rules/conditions.js';
 import {
   accept,
+  defaultMap,
   describeTile,
   isVerdict,
   occupiedTiles,
   reject,
-  soleMap,
   type EngineContext,
 } from '../rules/context.js';
 import type { Store } from '../store/index.js';
@@ -139,7 +139,7 @@ function applySpawn(ctx: EngineContext, intent: SpawnIntent): Verdict {
     );
   }
 
-  const map = intent.map === null ? soleMap(store) : store.getMap(intent.map);
+  const map = intent.map === null ? defaultMap(store) : store.getMap(intent.map);
   if (map === undefined) return reject(`There is no map called ${intent.map}.`);
   if (isVerdict(map)) return map;
   if (!inBounds(map, intent.at)) return reject(`${describeTile(intent.at)} is off the map.`);

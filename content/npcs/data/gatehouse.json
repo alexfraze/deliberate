@@ -16,6 +16,14 @@
     "#............#",
     "##############"
   ],
+  "exits": [
+    {
+      "at": { "x": 1, "y": 10 },
+      "to": "m1-postern-lane",
+      "entrance": { "x": 1, "y": 0 },
+      "label": "the postern lane"
+    }
+  ],
   "door": { "x": 6, "y": 4 },
   "player": { "x": 2, "y": 9, "facing": "N" },
   "flags": {

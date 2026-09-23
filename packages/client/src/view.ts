@@ -20,6 +20,8 @@ export interface ViewEntity {
   id: EntityId;
   name: string;
   faction: FactionId;
+  /** Which map they are standing on. Only those on `ViewState.mapId` are drawn (ALE-43). */
+  map: MapId;
   tile: Tile;
   hp: number;
   maxHp: number;
@@ -27,8 +29,17 @@ export interface ViewEntity {
 }
 
 export interface ViewState {
+  /** The map being rendered: wherever the player character is standing. */
   mapId: MapId | null;
   map: MapRecord | null;
+  /**
+   * Every loaded map, so a crossing is a swap of what is drawn rather than a round trip to the
+   * server. The snapshot already carried them; nothing ever looked past the first one (ALE-43).
+   */
+  maps: Record<MapId, MapRecord>;
+  /** The player character, whose map decides which board is on screen. Null before joining. */
+  player: EntityId | null;
+  /** Everyone, on every map. `entitiesHere` is what the renderer draws. */
   entities: Record<EntityId, ViewEntity>;
   /**
    * Turn order, or null out of combat. Kept up to date entirely from the diff stream
@@ -52,6 +63,7 @@ function toViewEntity(
     id,
     name,
     faction: components.faction?.id ?? 'neutral',
+    map: position.map,
     tile: { x: position.x, y: position.y },
     hp: components.health?.hp ?? 1,
     maxHp: components.health?.maxHp ?? 1,
@@ -62,20 +74,40 @@ function toViewEntity(
 /** Builds the render model from a snapshot. The snapshot itself is never mutated or retained. */
 export function viewFromSnapshot(snapshot: Snapshot): ViewState {
   const entities: Record<EntityId, ViewEntity> = {};
-  let mapId: MapId | null = null;
+  let player: EntityId | null = null;
+  let first: MapId | null = null;
   for (const [id, entity] of Object.entries(snapshot.entities)) {
     const view = toViewEntity(id, entity.name, entity.components);
     if (!view) continue;
     entities[id] = view;
-    mapId ??= entity.components.position?.map ?? null;
+    first ??= view.map;
+    if (player === null && entity.components.brain?.policy === 'player') player = id;
   }
-  mapId ??= Object.keys(snapshot.world.maps)[0] ?? null;
-  const map = mapId === null ? null : (snapshot.world.maps[mapId] ?? null);
-  return { mapId, map, entities, initiative: structuredClone(snapshot.initiative) };
+  // The rendered board is wherever the player is standing. With one map loaded that is the map,
+  // which is what it has always been; with several it is the only answer that is not a guess.
+  const mapId =
+    (player === null ? null : (entities[player]?.map ?? null)) ??
+    first ??
+    Object.keys(snapshot.world.maps)[0] ??
+    null;
+  const maps = structuredClone(snapshot.world.maps);
+  return {
+    mapId,
+    map: mapId === null ? null : (maps[mapId] ?? null),
+    maps,
+    player,
+    entities,
+    initiative: structuredClone(snapshot.initiative),
+  };
 }
 
 export function emptyView(): ViewState {
-  return { mapId: null, map: null, entities: {}, initiative: null };
+  return { mapId: null, map: null, maps: {}, player: null, entities: {}, initiative: null };
+}
+
+/** The entities on the map being rendered. Everyone else is somewhere the camera is not. */
+export function entitiesHere(view: ViewState): ViewEntity[] {
+  return Object.values(view.entities).filter((entity) => entity.map === view.mapId);
 }
 
 /**
@@ -87,6 +119,19 @@ export function applyDiffToView(view: ViewState, diff: Diff): void {
     case 'EntityMoved': {
       const entity = view.entities[diff.entity];
       if (entity) entity.tile = { x: diff.to.x, y: diff.to.y };
+      return;
+    }
+    case 'EntityTraversed': {
+      const entity = view.entities[diff.entity];
+      if (!entity) return;
+      entity.map = diff.toMap;
+      entity.tile = { x: diff.to.x, y: diff.to.y };
+      // When the player walks through, the board swaps: a different map, and with it a different
+      // cast. Everyone left behind is still in `entities` and simply stops being drawn.
+      if (diff.entity === view.player) {
+        view.mapId = diff.toMap;
+        view.map = view.maps[diff.toMap] ?? null;
+      }
       return;
     }
     case 'DamageApplied': {

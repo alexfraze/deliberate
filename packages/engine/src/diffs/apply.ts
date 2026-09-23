@@ -60,6 +60,15 @@ function applyInto(state: Snapshot, diff: Diff): void {
       if (facing) position.facing = facing;
       return;
     }
+    case 'EntityTraversed': {
+      // A crossing is a cut, not a walk: the map changes and the tile with it, and facing is
+      // left where the last step put it. Absolute, so folding it twice lands where once did.
+      const position = mustPosition(state, diff.entity);
+      position.map = diff.toMap;
+      position.x = diff.to.x;
+      position.y = diff.to.y;
+      return;
+    }
     case 'DamageApplied': {
       const health = mustHealth(state, diff.target);
       if (health.tempHp !== undefined) {

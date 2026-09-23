@@ -28,6 +28,7 @@ import {
   type FlagValue,
   type Health,
   type Inventory,
+  type MapExit,
   type MapId,
   type MapRecord,
   type Portrait,
@@ -43,6 +44,7 @@ import guardJson from '../data/guard.json' with { type: 'json' };
 import merchantJson from '../data/merchant.json' with { type: 'json' };
 import scoutJson from '../data/scout.json' with { type: 'json' };
 import sceneJson from '../data/gatehouse.json' with { type: 'json' };
+import laneJson from '../data/postern-lane.json' with { type: 'json' };
 
 // ---------------------------------------------------------------------------------------------
 // Disposition scale — the engine numbers every gate in this package is expressed in
@@ -136,10 +138,27 @@ export interface SceneContent {
   seed: Seed;
   name: string;
   rows: string[];
+  /** Ways off this map (ALE-43). Each one is matched by an entrance on the map it leads to. */
+  exits: MapExit[];
   door: Tile;
   player: Tile & { facing: Direction8 };
   flags: Record<string, FlagValue>;
   quests: Record<QuestId, Quest>;
+}
+
+/**
+ * A neighbouring location: terrain and the ways back, and nothing else (ALE-43).
+ *
+ * Nobody lives here and nothing happens here. It exists so the gatehouse has somewhere to be
+ * next to — the thing `traverse` needs and the M1 scene never had — and so the client has a
+ * second board to swap to. Populating it is `spawn`'s job and authoring one like it, without a
+ * human writing the JSON, is the game master's (ALE-44).
+ */
+export interface NeighbourContent {
+  mapId: MapId;
+  name: string;
+  rows: string[];
+  exits: MapExit[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -178,9 +197,42 @@ export function byId(id: EntityId): NpcArchetype | undefined {
   return NPC_ARCHETYPES.find((n) => n.id === id);
 }
 
-/** Fresh copy of the gatehouse map. */
-export function gatehouseMap(): MapRecord {
-  return parseMapRows(GATEHOUSE_MAP_ID, SCENE.rows);
+export const POSTERN_LANE: NeighbourContent = laneJson as NeighbourContent;
+export const POSTERN_LANE_MAP_ID: MapId = POSTERN_LANE.mapId;
+
+/**
+ * How much of the world to load around the gatehouse.
+ *
+ * `neighbours` exists for exactly one caller: the regression bank's generated sessions
+ * (`packages/server/src/bank/generate.ts`) are recordings of the yard as M1 authored it, before
+ * anywhere existed to walk to. A recording is evidence of a world that was, so the bank pins the
+ * world it was recorded in rather than being rewritten every time the map grows. Everything else
+ * — the server, the tests, the client — gets the whole neighbourhood.
+ */
+export interface GatehouseOptions {
+  /** Load the lane beyond the postern and the exits between (ALE-43). Defaults to true. */
+  neighbours?: boolean;
+}
+
+/** Fresh copy of the gatehouse map; the postern is an exit on it, not a hole in the wall. */
+export function gatehouseMap(options: GatehouseOptions = {}): MapRecord {
+  const map = parseMapRows(GATEHOUSE_MAP_ID, SCENE.rows);
+  return options.neighbours === false ? map : { ...map, exits: structuredClone(SCENE.exits) };
+}
+
+/** Fresh copy of the lane outside the postern, with the way back in. */
+export function posternLaneMap(): MapRecord {
+  return {
+    ...parseMapRows(POSTERN_LANE_MAP_ID, POSTERN_LANE.rows),
+    exits: structuredClone(POSTERN_LANE.exits),
+  };
+}
+
+/** Every map the gatehouse scene loads, in authoring order. */
+export function gatehouseMaps(options: GatehouseOptions = {}): MapRecord[] {
+  const maps = [gatehouseMap(options)];
+  if (options.neighbours !== false) maps.push(posternLaneMap());
+  return maps;
 }
 
 /** The protocol `Entity` for an archetype. Cosmetic `dialogue.seeds` is the gated lines, flattened. */
@@ -247,13 +299,16 @@ export function gatehousePlayer(): Entity {
 }
 
 /**
- * The whole scene as a `Snapshot`: the player and all three archetypes on one map, no encounter
- * running. Fresh objects on every call. Additive to the M0 fixtures, which stay as they are.
+ * The whole scene as a `Snapshot`: the player and all three archetypes in the yard, the lane
+ * beyond the postern loaded and empty, no encounter running. Fresh objects on every call. Additive to the M0 fixtures, which stay as they are.
  */
-export function gatehouseSnapshot(): Snapshot {
-  const map = gatehouseMap();
+export function gatehouseSnapshot(options: GatehouseOptions = {}): Snapshot {
   const entities: Record<EntityId, Entity> = {};
   for (const e of [gatehousePlayer(), ...NPC_ARCHETYPES.map(npcEntity)]) entities[e.id] = e;
+  const maps: Record<MapId, MapRecord> = {};
+  // Two maps since ALE-43: the yard everyone stands in, and the lane the postern lets out onto.
+  // Nothing is on the lane — it is somewhere to walk to, which is what `traverse` needed.
+  for (const map of gatehouseMaps(options)) maps[map.id] = map;
   return {
     schema: PROTOCOL_VERSION,
     entities,
@@ -261,7 +316,7 @@ export function gatehouseSnapshot(): Snapshot {
       flags: structuredClone(SCENE.flags),
       quests: structuredClone(SCENE.quests),
       clock: 0,
-      maps: { [map.id]: map },
+      maps,
     },
     initiative: null,
   };

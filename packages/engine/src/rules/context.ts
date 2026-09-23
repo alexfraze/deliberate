@@ -96,6 +96,27 @@ export function checkTurn(store: Store, actor: Actor): InitiativeState | null | 
 }
 
 /**
+ * What a `null` map argument means now that a world can hold more than one map (ALE-43).
+ *
+ * With one map loaded it is that map, exactly as `soleMap` has always said. With several, it is
+ * the map the player character is standing on — "here", which is what an unqualified tile in a
+ * tool call has always meant and, until a second map existed, could only have meant. Guessing
+ * between two maps with nobody to anchor it would be a silent wrong answer, so that still fails.
+ */
+export function defaultMap(store: Store): MapRecord | Verdict {
+  const ids = Object.keys(store.world().maps).sort();
+  if (ids.length <= 1) return soleMap(store);
+  for (const id of store.entityIds()) {
+    const entity = store.getEntity(id)!;
+    if (entity.components.brain?.policy !== 'player') continue;
+    const map = entity.components.position?.map;
+    const record = map === undefined ? undefined : store.getMap(map);
+    if (record) return record;
+  }
+  return reject(`Several maps are loaded: ${ids.join(', ')}.`);
+}
+
+/**
  * The only loaded map when there is exactly one, which is what a `null` map argument means. With
  * several loaded the caller has to say which, because guessing would be a silent wrong answer.
  */

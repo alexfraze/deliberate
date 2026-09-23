@@ -9,6 +9,7 @@ function entity(id: string, hp: number, conditions: string[] = []): ViewEntity {
     id,
     name: id === 'player' ? 'Player' : `NPC ${id}`,
     faction: id === 'player' ? 'party' : 'vermin',
+    map: 'test-map',
     tile: { x: 0, y: 0 },
     hp,
     maxHp: 10,

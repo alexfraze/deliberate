@@ -21,7 +21,7 @@ import {
 } from '../grid/index.js';
 import { attackSources, rollMode, type RollMode } from '../rules/attack.js';
 import { isAlive } from '../rules/conditions.js';
-import { isVerdict, occupiedTiles, soleMap } from '../rules/context.js';
+import { defaultMap, isVerdict, occupiedTiles } from '../rules/context.js';
 import { checkAttack } from '../rules/create-engine.js';
 import { economyOf, freshEconomy } from '../rules/initiative.js';
 import { abilityModifier } from '../rules/abilities.js';
@@ -64,7 +64,7 @@ function mapOf(store: Store, id: string | null): MapRecord {
     if (!map) fail(`There is no map called ${id}.`);
     return map;
   }
-  const map = soleMap(store);
+  const map = defaultMap(store);
   if (isVerdict(map)) fail(map.reason ?? 'No map is loaded.');
   return map;
 }
