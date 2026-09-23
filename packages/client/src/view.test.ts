@@ -120,6 +120,102 @@ describe('crossing between maps', () => {
   });
 });
 
+/**
+ * ALE-48, the seam between ALE-43's board swap and ALE-44's authoring: **walking into a location
+ * that did not exist when the session started**.
+ *
+ * `viewFromSnapshot` copies the maps that were loaded when the player joined, and the client is
+ * given exactly one snapshot and a stream of diffs after it. So a location written mid-session
+ * reaches the renderer only through `MapAuthored`, and if that diff is not folded, the crossing
+ * into it sets `view.map` to null and the board goes blank — the one thing M4 promises a player,
+ * silently not delivered, with the engine, the recording and the replay all perfectly correct.
+ *
+ * `links` matters just as much: the frontier tile the player is standing on only becomes a door
+ * the UI will let them click once the map they are standing on carries the new exit.
+ */
+describe('walking into a location that did not exist', () => {
+  const authored: Diff = {
+    type: 'MapAuthored',
+    map: {
+      id: 'm0-spoil-rise',
+      width: 3,
+      height: 3,
+      cells: Array.from({ length: 9 }, () => ({ elevation: 0, walkable: true })),
+      entrance: { x: 1, y: 1 },
+      exits: [{ at: { x: 1, y: 1 }, to: 'm0-yard', entrance: { x: 4, y: 4 }, label: 'the yard' }],
+      frontiers: [{ at: { x: 2, y: 2 }, label: 'the slope going on up' }],
+      objectives: [],
+    },
+    links: [
+      {
+        map: 'm0-yard',
+        exits: [
+          { at: { x: 4, y: 4 }, to: 'm0-spoil-rise', entrance: { x: 1, y: 1 }, label: 'the rise' },
+        ],
+        frontiers: [],
+      },
+    ],
+  };
+
+  it('adds the authored map to the boards the client can render', () => {
+    const view = viewFromSnapshot(fixtureSnapshot());
+    applyDiffToView(view, authored);
+    expect(Object.keys(view.maps).sort()).toEqual(['m0-spoil-rise', 'm0-yard']);
+    expect(view.maps['m0-spoil-rise']?.width).toBe(3);
+    // The board under the player's feet has not changed; authoring is not a crossing.
+    expect(view.mapId).toBe('m0-yard');
+  });
+
+  it('opens the door on the map the player is standing on', () => {
+    const view = viewFromSnapshot(fixtureSnapshot());
+    applyDiffToView(view, authored);
+    // Without this the frontier tile is still just a tile: the inspector says nothing and the
+    // click that should take the door does nothing.
+    expect(view.maps['m0-yard']?.exits).toEqual([
+      { at: { x: 4, y: 4 }, to: 'm0-spoil-rise', entrance: { x: 1, y: 1 }, label: 'the rise' },
+    ]);
+    expect(view.maps['m0-yard']?.frontiers).toEqual([]);
+    // The rendered board is that same record, so the door opens on the map being drawn and not
+    // only in the registry beside it.
+    expect(view.map?.exits?.[0]?.to).toBe('m0-spoil-rise');
+  });
+
+  it('renders the new board when the player walks onto it', () => {
+    const view = viewFromSnapshot(fixtureSnapshot());
+    applyDiffsToView(view, [
+      authored,
+      {
+        type: 'EntityTraversed',
+        entity: 'player',
+        fromMap: 'm0-yard',
+        from: { x: 4, y: 4 },
+        toMap: 'm0-spoil-rise',
+        to: { x: 1, y: 1 },
+      },
+    ]);
+    expect(view.mapId).toBe('m0-spoil-rise');
+    // The whole gate, in one assertion: there is a board to draw.
+    expect(view.map?.width).toBe(3);
+    expect(entitiesHere(view).map((e) => e.id)).toEqual(['player']);
+  });
+
+  it('is absolute: folding the same authoring twice lands where once did', () => {
+    const view = viewFromSnapshot(fixtureSnapshot());
+    applyDiffsToView(view, [authored]);
+    const once = structuredClone(view.maps);
+    applyDiffsToView(view, [authored]);
+    expect(view.maps).toEqual(once);
+  });
+
+  it('does not alias the diff it was folded from', () => {
+    const view = viewFromSnapshot(fixtureSnapshot());
+    const diff = structuredClone(authored);
+    applyDiffToView(view, diff);
+    view.maps['m0-spoil-rise']!.width = 99;
+    expect((diff as typeof authored).map.width).toBe(3);
+  });
+});
+
 describe('applyDiffsToView', () => {
   it('folds every diff type the protocol defines', () => {
     const view = viewFromSnapshot(fixtureSnapshot());

@@ -162,13 +162,43 @@ export function applyDiffToView(view: ViewState, diff: Diff): void {
       if (view.initiative) view.initiative.turn = { ...diff.turn };
       return;
     }
+    case 'MapAuthored': {
+      // A location written mid-session (ALE-44). The client is given one snapshot and a stream of
+      // diffs after it, so this is the **only** way a map that did not exist at join time can ever
+      // reach the renderer — and without it the crossing into it finds no board and draws nothing.
+      // Absolute like the rest: the whole `MapRecord` travels, so folding it twice lands where
+      // folding it once did.
+      view.maps[diff.map.id] = structuredClone(diff.map);
+      // And the doors that now lead to it. The frontier the player is standing on is only a door
+      // the UI will let them click once the map under their feet carries the exit — which is why
+      // these are edited in place: `view.map` is that same record, not a copy of it.
+      for (const link of diff.links) {
+        const map = view.maps[link.map];
+        if (!map) continue;
+        map.exits = structuredClone(link.exits);
+        map.frontiers = structuredClone(link.frontiers);
+      }
+      return;
+    }
     case 'DialogueLine':
     case 'FlagSet':
     case 'FacingChanged':
+    case 'DispositionChanged':
+    case 'QuestAdvanced':
       // Nothing on screen depends on these yet: narration lands in M1, and the capsules the
       // renderer draws have no front.
       return;
+    default:
+      // The switch returns `void`, so an unhandled member is not a type error the way it is in
+      // `describe()` — which is how `MapAuthored` was added to the protocol and silently never
+      // folded here, leaving a player who walked into an authored location looking at nothing.
+      // This makes the next one a compile error instead of a blank board (ALE-48).
+      return assertEveryDiffIsFolded(diff);
   }
+}
+
+function assertEveryDiffIsFolded(diff: never): void {
+  void diff;
 }
 
 export function applyDiffsToView(view: ViewState, diffs: readonly Diff[]): void {
