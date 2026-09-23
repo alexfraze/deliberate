@@ -186,8 +186,9 @@ export interface GmLoopOptions {
   cacheSize?: number;
   /**
    * How the ambient world turn is tuned (ALE-41): how near the player has to be to be noticed,
-   * how many rounds of standing still count as a beat, and how many NPCs may act in one quiet
-   * turn. `ambient.max = 0` switches the feature off without a protocol change.
+   * how many rounds of standing still count as a beat, how many NPCs may act in one quiet turn,
+   * and how far from the player one may be and still be asked (`vicinityFt`, ALE-45).
+   * `ambient.max = 0` switches the feature off without a protocol change.
    */
   ambient?: AmbientOptions;
   /**
@@ -1010,6 +1011,11 @@ export function stateSummary(
       at: entity.components.position
         ? { x: entity.components.position.x, y: entity.components.position.y }
         : null,
+      // Which map they are standing on (ALE-45). One word per entity, and the only thing the GM
+      // service needs to scope this summary spatially: without it a list of a hundred and fifty
+      // people is a list of a hundred and fifty people, and the 12k budget has nothing to cut on.
+      // See `services/gm/src/deliberate_gm/prompt/scope.py`.
+      map: entity.components.position?.map ?? null,
       hp: entity.components.health?.hp ?? null,
       maxHp: entity.components.health?.maxHp ?? null,
       conditions: entity.components.health?.conditions ?? [],

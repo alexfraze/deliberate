@@ -11,18 +11,31 @@ import json
 from typing import Any
 
 #: Characters per token, measured against `messages.count_tokens` on real payloads of the
-#: shapes this service actually sends:
+#: shapes this service actually sends. Two rounds of measurement, and the second matters more:
 #:
-#:     tools + system only   2.65      ledger block   2.49
-#:     prose-heavy turn      2.67      JSON state     2.57
+#:     ONE COMPONENT AT A TIME (ALE-15)        A WHOLE ASSEMBLED REQUEST (ALE-45)
+#:     tools + system only   2.65              1 map, 3 people          2.468
+#:     prose-heavy turn      2.67              12 maps, 96 people       2.477
+#:     ledger block          2.49              30 maps, 360 people      2.484
+#:     JSON state            2.57              200 maps, 5000 people    2.484
 #:
-#: The familiar "~4 characters per token" is for English prose with no structure. Most of
-#: this prompt is JSON -- fifteen tool schemas, a state summary, a ledger -- which tokenizes
-#: far denser, and using 4 here under-counted the real prompt by about 40%: a "12k budget"
-#: was letting 20k through. 2.5 sits at the dense end of the measured range, so the estimate
-#: errs high; shedding a little memory too early is a far cheaper mistake than blowing the
-#: context budget.
-CHARS_PER_TOKEN = 2.5
+#: The familiar "~4 characters per token" is for English prose with no structure. Most of this
+#: prompt is JSON -- seventeen tool schemas, a state summary, a ledger -- which tokenizes far
+#: denser, and using 4 here under-counted the real prompt by about 40%: a "12k budget" was
+#: letting 20k through.
+#:
+#: 2.5 was chosen as the dense end of the first table and it was not dense enough, because a
+#: whole request is denser than any of its parts: the JSON scaffolding that joins them --
+#: braces, quoted keys, indentation, `\n` escapes -- is the densest text in it. At 2.5 the
+#: estimate read about 1% *under* the real count on every size above, which is invisible until
+#: something sits near the ceiling and then is exactly the bug it was meant to prevent: ALE-45's
+#: 30-map turn estimated 11,981 against a real 12,057, and a budget test passed on it.
+#:
+#: 2.45 is below the densest whole request measured, so the estimate now reads 1-2% high
+#: everywhere rather than 1% low. That is the direction the error has to point: shedding a
+#: little memory too early is a far cheaper mistake than blowing the context budget.
+#: `tests/test_live.py` re-measures both tables.
+CHARS_PER_TOKEN = 2.45
 
 
 def estimate_tokens(value: Any) -> int:

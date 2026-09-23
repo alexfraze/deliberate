@@ -27,11 +27,27 @@ from .notes import CAPS
 MIN_MEMORY_TOKENS = 400
 #: How far the ledger is folded, each time shedding comes back round to it.
 LEDGER_SHED_STEP = 4
+#: The most of the turn's budget the *world* may take before the spatial ladder starts tightening
+#: (ALE-45). Memory is still shed to fit whatever is left, so this is not a guarantee — it is the
+#: point at which the cheaper thing to give up is a stranger on another map rather than the record
+#: of what the engine already refused. A third is where a fully loaded set of blocks lands.
+MEMORY_RESERVE_SHARE = 3
 
 
 def estimate(text: str) -> int:
     """The same measured characters-per-token as the rest of the budget arithmetic."""
     return max(0, int(len(text) / CHARS_PER_TOKEN))
+
+
+def reserve(memory: MemoryBlocks, *, budget: int) -> int:
+    """How much of `budget` to hold back for these blocks before scoping the state (ALE-45).
+
+    What they would cost rendered whole, floored so a starved turn still gets something and
+    capped so a runaway world model cannot crowd out the board. Blocks smaller than the cap ask
+    for less, so an early turn with almost no memory spends almost the whole budget on the world.
+    """
+    whole = estimate(_render(memory))
+    return max(MIN_MEMORY_TOKENS, min(whole, budget // MEMORY_RESERVE_SHARE))
 
 
 def render(memory: MemoryBlocks, *, budget: int) -> tuple[str, MemoryBlocks]:

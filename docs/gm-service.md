@@ -372,6 +372,40 @@ ranking rather than raw distance decides who acts: the person the change is _abo
 distance only breaks ties. Sorting on distance alone starved anyone across the yard, because a
 neighbour at the player's elbow re-qualifies on the idle drum every few rounds.
 
+### Locality: the bound on who is asked (ALE-45)
+
+One NPC acts per ambient turn, so **who is eligible** decides whether the world reads as alive.
+`ambientCast` has never looked at a map other than the player's, which was the whole of the
+question while the gatehouse was the whole of the world. M4 makes it a different question: an
+authored district is two hundred feet across, so "on the player's map" stops meaning "near the
+player", and the one turn a quiet minute buys starts going to people the player never sees. That
+is the worst of both — the turn is paid for and nothing is perceived — and it would arrive as a
+feature, in the milestone whose point is a bigger world.
+
+`AMBIENT_VICINITY_FT` (120 ft, four moves) bounds the cast. Nobody is cancelled by it: an NPC out
+of vicinity keeps the reading it last acted on, so the first turn the player comes within range it
+is a candidate again, exactly as one crowded out by `MAX_AMBIENT_ACTORS` is. `Salience` is
+untouched — this is a filter on who is asked, not a new sort key.
+
+`packages/server/src/gm/locality.test.ts` measures it, holding the player's scene constant (the
+same three neighbours in the same small room) and growing everything else, so a fall in the rate
+cannot be blamed on the fixture thinning out. Over 120 quiet turns, counting the turns on which
+somebody acted **within the player's scene**:
+
+| World                  | People | Player's map only | With the vicinity bound |
+| ---------------------- | ------ | ----------------- | ----------------------- |
+| the gatehouse as it is | 3      | 120 / 120         | 120 / 120               |
+| one wide district      | 30     | 93 / 120          | 120 / 120               |
+| ten maps               | 138    | 93 / 120          | 120 / 120               |
+| thirty maps            | 378    | 93 / 120          | 120 / 120               |
+| thirty maps, busier    | 788    | 87 / 120          | 120 / 120               |
+
+Two things are worth reading off that. Thirty maps are no worse than one wide one, because the
+map filter was already there — the leak is _within_ a map. And the fall is a fifth rather than the
+wipe-out "one turn shared among thirty people" suggests, because `Salience` was already protecting
+most of the scene: a neighbour whose proximity band just changed outranks a stranger's idle drum.
+What it did not protect is `Unmet` and `Idle`, and those are the turns a wide district took.
+
 ### What it does not do
 
 It does not start encounters, and it did not need to. `applyAttack` opens initiative on the first
@@ -478,17 +512,69 @@ rather than a hope; `TurnResponse.prompt_tokens_estimate` reports the result.
 
 Measuring happens locally, in `tokens.py`: budgeting runs inside a turn and must not cost a
 network round trip. The familiar "~4 characters per token" is for unstructured English, and
-this prompt is mostly JSON — fifteen tool schemas, a state summary, a ledger — which
-tokenizes far denser. Measured against `messages.count_tokens` on real payloads it is 2.49
-to 2.86 characters per token, so the estimator uses **2.5**: at 4 it ran about 40% under, and
-a "12k budget" was letting 20k through. 2.5 sits at the dense end, so the estimate errs high
-— shedding a little memory early is a much cheaper mistake than blowing the context window.
-`tests/test_live.py` re-checks that calibration against the real tokenizer, and checks that a
-fully loaded turn really does fit 12k once the model counts it.
+this prompt is mostly JSON — seventeen tool schemas, a state summary, a ledger — which
+tokenizes far denser. At 4 the estimate ran about 40% under and a "12k budget" was letting 20k
+through.
+
+The constant has been measured twice, and the second time changed it. ALE-15 measured the parts
+one at a time and found 2.49–2.86 characters per token, so the estimator took **2.5** as the
+dense end. ALE-45 measured _whole assembled requests_ and found 2.468–2.484 — denser than any
+part of them, because the JSON scaffolding that joins the parts is the densest text in the
+prompt. At 2.5 the estimate therefore read about 1% **under** the real count on every size, which
+is invisible until something sits near the ceiling: a 30-map turn estimated 11,981 against a real
+12,057, and a budget test passed on it. The estimator now uses **2.45**, below the densest whole
+request measured, so it reads 1–2% high rather than 1% low. That is the direction the error has
+to point — shedding a little memory early is a much cheaper mistake than blowing the context
+window. `tests/test_live.py` holds both tables and re-checks them against the real tokenizer.
 
 When memory does not fit, blocks are shed in a fixed order: player profile, then world-model
 notes oldest-first, then the ledger folds further into its digest. The ledger is shed last
 and never entirely — it is the only block that records what actually happened.
+
+#### Spatial scoping (ALE-45)
+
+"Memory gets what is left" assumed the rest was a constant. It is not: the state summary lists
+every entity in the world, so it grows with the world, and the arithmetic above was written when
+the world was one map and three people. At thirty maps the summary alone is ~30k tokens. It does
+not fail loudly — it eats the budget, memory sheds to its 400-token floor, and the turn goes out
+over budget carrying strangers on maps the player has never seen.
+
+`prompt/scope.py` makes the summary **spatial**, which is `docs/m4-swarm.md` decision 6:
+
+| Rung       | The player's map      | Other maps                           |
+| ---------- | --------------------- | ------------------------------------ |
+| `full`     | everything, untouched | everything, untouched                |
+| `vicinity` | everyone              | a line each, naming who is next door |
+| `map`      | everyone              | a line each, counts only             |
+| `near`     | the nearest 12        | 12 lines, then "and n more"          |
+| `here`     | the nearest 6         | 4 lines, then "and n more"           |
+
+`fit` takes the **first rung that fits**, so a one-map world is returned untouched and a large one
+pays exactly as much as it has to. What is scoped out is not lost: `get_state` reads the board and
+`recall(topic)` searches the record, which is the same "reading state is free, guessing is not"
+discipline as the rest of the prompt. The acting entity and anyone in the initiative order are
+never scoped away wherever they are standing, and a summary whose entities carry no `map` is
+returned unchanged, so a caller that has not been taught to label positions keeps its old
+behaviour rather than getting a silently emptied world.
+
+The state is fitted **before** memory rather than after it, holding back what the blocks would
+cost rendered whole (capped at a third of the budget). Fitting memory first was the old order and
+it is the wrong one: it spends the budget on strangers and pays for them with the ledger.
+
+Measured end to end, against `messages.count_tokens`:
+
+| World                  | Raw state summary | Prompt, real tokenizer | Memory |
+| ---------------------- | ----------------- | ---------------------- | ------ |
+| 1 map, 3 people        | 628               | 9,788                  | intact |
+| 4 maps, 24 people      | 2,375             | 10,490                 | intact |
+| 12 maps, 96 people     | 8,307             | 10,991                 | intact |
+| 30 maps, 360 people    | 30,712            | 11,442                 | intact |
+| 200 maps, 5,000 people | 430,017           | 11,441                 | intact |
+
+The prompt stops growing and the memory blocks survive whole. `tests/test_scope.py` asserts the
+ceiling on every size against the local estimate; `tests/test_live.py` re-asserts the same sizes
+against the tokenizer that bills them, because a ceiling checked only against the estimator that
+decides where the ceiling is proves nothing.
 
 ## Model settings
 
