@@ -1,6 +1,9 @@
 /**
- * The Deliberate panel: the preview, the telegraphed NPC reactions, the GO button and the
- * narration stream (ALE-32).
+ * The Deliberate panel: the preview, the telegraphed NPC reactions and the GO button (ALE-32).
+ *
+ * Narration used to land here too. It does not any more (ALE-35): scene prose is part of the
+ * conversation, and the conversation has its own region now — `thread.ts` argues why. What is left
+ * on this column is only the controls, which is what stopped a long preview pushing GO off screen.
  *
  * Everything on it is provisional until GO. The panel therefore never touches the view, the scene
  * or the animation queue — it renders text the server sent and emits two events (toggle, GO). The
@@ -34,6 +37,11 @@ export interface DeliberatePanel {
   committing(): void;
   /** Back to nothing staged — after a commit, or after the server refused. */
   reset(note?: string): void;
+  /**
+   * The narration stream is running. The words themselves go to the dialogue thread; what the
+   * panel still owns is the clock, because "narrating" is the last phase of a turn the player is
+   * waiting on, and the preview text has to be cleared when the turn it described is over.
+   */
   narrate(chunk: string, done: boolean): void;
   /**
    * Show that the game master is working, with a running clock. A preview takes tens of seconds,
@@ -121,7 +129,6 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   const prose = element('div', 'dl-preview');
   const reactions = document.createElement('ul');
   reactions.className = 'dl-reactions';
-  const narration = element('div', 'dl-narration');
 
   const go = document.createElement('button');
   go.id = 'go';
@@ -158,7 +165,6 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     wait,
     encounter,
     provenance,
-    narration,
   );
 
   // What the panel knows about who is running the turn. None of it is authoritative — it is a
@@ -249,7 +255,6 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     if (!on) {
       staged.textContent = '';
       prose.textContent = '';
-      narration.textContent = '';
       setReactions([]);
       go.disabled = true;
       stopBusy();
@@ -271,7 +276,6 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
       prose.textContent = '';
       startBusy('the game master is thinking');
       setReactions([]);
-      narration.textContent = '';
       go.disabled = true;
     },
     showPreview(text, diffs) {
@@ -296,7 +300,6 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     },
     narrate(chunk, done) {
       if (chunk) startBusy('narrating');
-      if (chunk) narration.textContent = `${narration.textContent ?? ''}${chunk}`;
       if (done) {
         stopBusy();
         prose.textContent = '';

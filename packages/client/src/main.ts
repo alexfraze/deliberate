@@ -34,6 +34,7 @@ import { createRenderer } from './renderer.js';
 import { createGameScene } from './scene.js';
 import { exitAt, resolvePick, type Pick, type PickWorld } from './selection.js';
 import { createSpeculator } from './speculate.js';
+import { SELF_FACTION, createDialogueThread } from './thread.js';
 import { NO_GM } from './deliberate.js';
 import { replayName } from './replay.js';
 import {
@@ -53,6 +54,8 @@ const overlay =
   document.getElementById('overlay') ?? document.body.appendChild(document.createElement('div'));
 const panelElement =
   document.getElementById('deliberate') ?? document.body.appendChild(document.createElement('div'));
+const dialogueElement =
+  document.getElementById('dialogue') ?? document.body.appendChild(document.createElement('div'));
 
 /**
  * The theme (ALE-34). One token set drives both the DOM overlay and the three.js scene, so the
@@ -75,6 +78,7 @@ function applyTheme(next: ThemeName): void {
   document.documentElement.style.colorScheme = next;
   scene.setPalette(palette);
   grade.setPalette(palette);
+  dialogue.setPalette(palette);
   refreshBackendLine();
 }
 
@@ -93,6 +97,22 @@ let view: ViewState = emptyView();
  */
 const panel = createDeliberatePanel(panelElement, {
   nameOf: (id) => view.entities[id]?.name ?? id,
+});
+
+/**
+ * The conversation (ALE-35). Its own region rather than another block in the panel: `thread.ts`
+ * makes the case, and `resize()` below hands its width to the scene so the board centres between
+ * the two overlays instead of behind one of them.
+ */
+const dialogue = createDialogueThread(dialogueElement, {
+  speakerOf: (id) => ({
+    name: view.entities[id]?.name ?? id,
+    faction: view.entities[id]?.faction ?? 'neutral',
+  }),
+  // Which entity is "you": the party one. Nothing else in the client needs to be told.
+  selfId: () =>
+    Object.values(view.entities).find((entity) => entity.faction === SELF_FACTION)?.id ?? null,
+  onLayout: () => resize(),
 });
 
 const fixtureMode = useFixtureMode(location.search, location.hash);
@@ -137,10 +157,16 @@ function resize(): void {
   const { width, height } = viewport();
   renderer.setSize(width, height, false);
   scene.resize(width, height);
-  // The panel is a fixed overlay on the right. Tell the scene how much of the viewport it hides
-  // so the map centres in what the player can see rather than behind it.
-  const panelWidth = panelElement.getBoundingClientRect().width;
-  scene.setViewportInset(panelWidth > 0 && panelWidth < width / 2 ? panelWidth + 24 : 0);
+  // The panel on the right and the dialogue thread on the left are fixed overlays. Tell the scene
+  // how much of the viewport each hides so the map centres in what the player can see rather than
+  // behind one of them. Either is ignored if it would take half the screen — on a viewport that
+  // narrow there is nothing left to centre in.
+  const gutter = (covered: number): number =>
+    covered > 0 && covered < width / 2 ? covered + 24 : 0;
+  scene.setViewportInset(
+    gutter(panelElement.getBoundingClientRect().width),
+    gutter(dialogue.width()),
+  );
 }
 window.addEventListener('resize', resize);
 resize();
@@ -215,6 +241,8 @@ function onMessage(message: ServerMessage): void {
       turn = message.turn;
       hash = message.hash;
       queue.clear();
+      // A new snapshot is a new world. The conversation that came before it was not this one's.
+      dialogue.clear();
       view = viewFromSnapshot(message.snapshot);
       if (view.map) scene.setMap(view.map);
       scene.syncEntities(view);
@@ -259,6 +287,7 @@ function onMessage(message: ServerMessage): void {
     }
     case 'narration': {
       panel.narrate(message.chunk, message.done);
+      dialogue.narrate(message.chunk, message.done);
       return;
     }
   }
@@ -365,6 +394,11 @@ function onAnimationEvent(event: QueueEvent): void {
   }
   if (event.type === 'finish') {
     const was = view.mapId;
+    // Spoken lines join the thread as their beat comes up, not when the frame arrived: the queue
+    // is what paces a turn, so the conversation lands with the movement it came with. Only
+    // committed diffs reach here — a preview's lines are shown as telegraphed reactions and have
+    // not happened.
+    if (animation.diff.type === 'DialogueLine') dialogue.say(animation.diff);
     applyDiffToView(view, animation.diff);
     // A crossing is the one diff that changes what the board *is*. Rebuild it before syncing, or
     // the capsules would be parked at tiles belonging to the map they just left.
@@ -556,6 +590,9 @@ panel.onSpeak(() => {
   }
   // `intent: null` is the protocol's "ask only what the world does" — talk, do not act.
   hud.setError(null);
+  // Your half of the conversation, on screen at once. The game master takes tens of seconds and
+  // its own `DialogueLine` for you supersedes this echo in place when it lands.
+  dialogue.playerSaid(text);
   panel.stage(null);
   askingServer();
   transport.send({ type: 'preview_request', room: DEFAULT_ROOM, turn, intent: null, text });

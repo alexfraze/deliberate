@@ -113,10 +113,11 @@ export interface GameScene {
   /** Back to the framed default. */
   recentre(): void;
   /**
-   * Dead space on the right that a fixed overlay covers, in CSS pixels. The map is centred on the
-   * origin, so without this it centres under the panel and reads as off-centre.
+   * Dead space that fixed overlays cover, in CSS pixels: the control panel on the right, and the
+   * dialogue thread on the left (ALE-35). The map is centred on the origin, so without this it
+   * centres under them and reads as off-centre.
    */
-  setViewportInset(rightPx: number): void;
+  setViewportInset(rightPx: number, leftPx?: number): void;
   setSelected(id: EntityId | null): void;
   /** What is under a pointer given in normalised device coordinates. */
   pick(ndc: Vector2): Pick;
@@ -199,10 +200,11 @@ export function createGameScene(palette: Palette): GameScene {
   let map: MapRecord | null = null;
   let selected: EntityId | null = null;
   let zoom = 1;
-  // Camera offset across the ground plane, and the width of the overlay covering the right edge.
+  // Camera offset across the ground plane, and the widths of the overlays covering each edge.
   let panX = 0;
   let panZ = 0;
-  let viewportInset = 0;
+  let insetRight = 0;
+  let insetLeft = 0;
 
   const disposeGroup = (group: Group): void => {
     for (const child of [...group.children]) {
@@ -462,6 +464,9 @@ export function createGameScene(palette: Palette): GameScene {
    * pushed the board the other way — further under the panel, with the dead space opening up on
    * the empty left instead. The map was legibly off-centre in every screenshot; ALE-34 noticed
    * while measuring how much of the frame the board actually fills.
+   *
+   * With an overlay on each edge the widths add — both are hidden width — but the shift takes
+   * their *difference*, so two equal overlays leave the board centred where it already was.
    */
   function frustum(): {
     halfWidth: number;
@@ -471,7 +476,7 @@ export function createGameScene(palette: Palette): GameScene {
     far: number;
   } {
     const frame = isoCameraFrame(map!, viewportWidth / viewportHeight, zoom);
-    const visible = Math.max(1, viewportWidth - viewportInset);
+    const visible = Math.max(1, viewportWidth - insetRight - insetLeft);
     const scale = viewportWidth / visible;
     const halfWidth = frame.halfWidth * scale;
     const halfHeight = frame.halfHeight * scale;
@@ -479,7 +484,7 @@ export function createGameScene(palette: Palette): GameScene {
     return {
       halfWidth,
       halfHeight,
-      shift: (viewportInset / 2) * worldPerPixel,
+      shift: ((insetRight - insetLeft) / 2) * worldPerPixel,
       near: frame.near,
       far: frame.far,
     };
@@ -555,8 +560,9 @@ export function createGameScene(palette: Palette): GameScene {
     renderer.shadowMap.type = BasicShadowMap;
   };
 
-  const setViewportInset = (rightPx: number): void => {
-    viewportInset = Math.max(0, rightPx);
+  const setViewportInset = (rightPx: number, leftPx = 0): void => {
+    insetRight = Math.max(0, rightPx);
+    insetLeft = Math.max(0, leftPx);
     frameCamera();
   };
 
