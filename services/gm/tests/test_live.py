@@ -31,6 +31,9 @@ from deliberate_gm.models import TurnRequest
 from deliberate_gm.prompt import find_leak, system_blocks
 from deliberate_gm.stub_engine import StubEngine
 
+from . import test_scope
+from .world import synthetic_state
+
 pytestmark = [
     pytest.mark.live,
     pytest.mark.skipif(not live_api_available(), reason="no ANTHROPIC_API_KEY"),
@@ -294,3 +297,52 @@ def test_a_real_model_treats_an_injection_as_speech(case_id: str) -> None:
             assert record.ok is False, f"{case_id}: {record.tool} was applied"
             assert record.diff == [], case_id
     assert all(entry.outcome != "applied" for entry in response.memory.ledger), case_id
+
+
+# ---------------------------------------------------------------------------------------------
+# Spatial scoping, by the real tokenizer (ALE-45)
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("maps", "per_map"), test_scope.SIZES)
+def test_the_prompt_holds_its_budget_as_the_world_grows(maps: int, per_map: int) -> None:
+    """ALE-45's first half, measured by `count_tokens` rather than by our own arithmetic.
+
+    This test exists in this file rather than beside `test_scope.py` because of what happened the
+    last time a budget was checked against an estimate. `chars/4` is a prose figure; this prompt is
+    JSON and tokenizes at 2.49-2.86, so the estimator ran about 40% under and a "12k budget" was
+    letting 20k through -- with an acceptance test passing the whole way, on a false measurement.
+    A ceiling asserted against the same estimator that decides where the ceiling is proves nothing
+    about the request the API actually receives, so the sizes in `test_scope.SIZES` are re-measured
+    here against the tokenizer that bills them.
+    """
+    from deliberate_gm.llm import LLMResult, ScriptedLLM
+    from deliberate_gm.policy import SAVE_POLICY_TOOL
+    from deliberate_gm.python_tool import PYTHON_TOOL
+
+    settings = Settings()
+    contract = (
+        load_contract(REAL_CONTRACT)
+        .with_tool(PYTHON_TOOL, kind="query")
+        .with_tool(SAVE_POLICY_TOOL, kind="query")
+    )
+    request = test_scope.turn_for(synthetic_state(maps=maps, npcs_per_map=per_map))
+    llm = ScriptedLLM(
+        [LLMResult(content=[{"type": "text", "text": "done"}], stop_reason="end_turn")]
+    )
+    response = GmAgent(llm=llm, engine=StubEngine(), contract=contract, settings=settings).run_turn(
+        request
+    )
+
+    sent = llm.requests[0]
+    real = count(sent.system, sent.messages, sent.tools)
+    assert real <= settings.input_token_budget, (
+        f"{maps} maps, {maps * per_map} people: {real} tokens, budget {settings.input_token_budget}"
+    )
+    # ...and the estimate the service budgets on reads at or above the real count, so the ceiling
+    # it enforces is the conservative one. This is the calibration check at M4's shapes, and it is
+    # not a formality: at `CHARS_PER_TOKEN = 2.5` it failed here by 76 tokens on the 30-map turn,
+    # because a whole assembled request tokenizes denser than any component of it measured alone.
+    assert response.prompt_tokens_estimate >= real, (
+        f"{maps} maps: estimate {response.prompt_tokens_estimate} under-counts real {real}"
+    )

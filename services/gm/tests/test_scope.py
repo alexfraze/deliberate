@@ -21,10 +21,12 @@ from deliberate_gm.stub_engine import StubEngine
 
 from .world import PLAYER, entity_ids, map_id, synthetic_state
 
-#: A one-map world, the world M4 starts from, and three sizes past it. The last is well beyond
-#: what the milestone plans for (decision 7 budgets "a twenty-location world"), which is the
-#: point: a ceiling that only holds at the sizes it was tuned on is not a ceiling.
-SIZES = [(1, 3), (4, 6), (12, 8), (30, 12)]
+#: A one-map world -- the world M4 starts from -- and four sizes past it. The last two are far
+#: beyond anything the milestone plans for (decision 7 budgets "a twenty-location world"), which
+#: is the point: a ceiling that only holds at the sizes it was tuned on is not a ceiling. Each
+#: entry is (maps, people per map). `tests/test_live.py` re-measures this same list against the
+#: tokenizer that bills it.
+SIZES = [(1, 3), (4, 6), (12, 8), (30, 12), (200, 25)]
 
 VERBATIM = LADDER[0]
 TIGHTEST = LADDER[-1]
