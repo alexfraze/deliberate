@@ -51,24 +51,27 @@ function clone(name: string): BankEntry {
 }
 
 describe('the regression bank', () => {
-  it('has the three live playthroughs and the generated sessions', () => {
+  it('has the live playthroughs and the generated sessions', () => {
     // ALE-25's gate is stated in playthroughs, so the count is asserted here rather than left to
-    // whoever reads the manifest: three sessions a real `claude-opus-5` wrote, each replaying.
+    // whoever reads the manifest: sessions a real `claude-opus-5` wrote, each replaying. ALE-25
+    // asked for three; `beyond-the-lane` is ALE-48's, and it is the only one in which the world
+    // the session is played in is not the world it started in.
     expect(bank.length).toBeGreaterThanOrEqual(8);
     expect(bank.filter((e) => e.session.source === 'live').map((e) => e.session.name)).toEqual([
       'm1-acceptance',
       'yard-brawl',
       'parley',
+      'beyond-the-lane',
     ]);
     expect(bank.filter((e) => e.session.source === 'engine').length).toBeGreaterThanOrEqual(5);
   });
 
-  it('covers three different stories, not one story recorded three times', () => {
-    // Three recordings of the same beats would be the first recording weighed three times. What
-    // makes them three playthroughs is that the world ends up somewhere different in each.
-    const live = ['m1-acceptance', 'yard-brawl', 'parley'];
+  it('covers four different stories, not one story recorded four times', () => {
+    // Four recordings of the same beats would be the first recording weighed four times. What
+    // makes them four playthroughs is that the world ends up somewhere different in each.
+    const live = ['m1-acceptance', 'yard-brawl', 'parley', 'beyond-the-lane'];
     const hashes = live.map((n) => runBank(bank, createEngine).sessions.find((s) => s.name === n)!);
-    expect(new Set(hashes.map((s) => s.metrics.finalHash)).size).toBe(3);
+    expect(new Set(hashes.map((s) => s.metrics.finalHash)).size).toBe(4);
 
     const diffs = (name: string) =>
       new Set(
@@ -83,6 +86,13 @@ describe('the regression bank', () => {
     expect(hashes[1]!.metrics.intents).toContain('attack');
     // The parley never draws: no attack anywhere in it, from the player or the game master.
     expect(hashes[2]!.metrics.intents).not.toContain('attack');
+    // And `beyond-the-lane` is the one that leaves the map it started on (ALE-48). It is the only
+    // session in the bank containing a `traverse` at all, and the only live one containing an
+    // `author_map`, so between them these two verbs have exactly one recording to fail in.
+    expect(hashes[3]!.metrics.intents).toContain('traverse');
+    expect(hashes[3]!.metrics.tools).toContain('author_map');
+    expect([...diffs('beyond-the-lane')]).toContain('MapAuthored');
+    expect([...diffs('beyond-the-lane')]).toContain('EntityTraversed');
   });
 
   it('replays every session to identical hashes and identical metrics', () => {

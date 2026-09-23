@@ -657,6 +657,12 @@ export interface AcceptanceHook {
   pending(): number;
   /** The hash the server reported with the last snapshot or diffs frame. */
   hash(): string;
+  /**
+   * The board actually being drawn. The HUD's "you are on X" is set from `view.mapId`, which moves
+   * on a crossing whether or not there is a map to show — so only this can tell a location that
+   * was rendered from a label over somebody else's terrain (ALE-48).
+   */
+  board(): { width: number; height: number } | null;
 }
 
 (window as unknown as { deliberate: AcceptanceHook }).deliberate = {
@@ -664,4 +670,8 @@ export interface AcceptanceHook {
   screenOfTile: (tile) => scene.projectTile(tile, viewport().width, viewport().height),
   pending: () => queue.pending,
   hash: () => hash,
+  board: () => {
+    const map = scene.map();
+    return map ? { width: map.width, height: map.height } : null;
+  },
 };
