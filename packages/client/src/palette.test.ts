@@ -175,6 +175,26 @@ describe('the palettes themselves', () => {
     expect(Math.abs(lightness(palette.text) - lightness(palette.surface))).toBeGreaterThan(60);
   });
 
+  /**
+   * ALE-51: a way off the map was invisible, and a player concluded they were boxed in. These two
+   * markers are drawn flat on the floor, unlit, so the only thing standing between them and the
+   * ground they sit on is the palette — a future edit that quietly brings either one toward the
+   * floor's value puts the bug straight back.
+   */
+  it.each(THEMES)(
+    '%s separates a way out and a frontier from the floor, and from each other',
+    (name) => {
+      const palette = paletteFor(name);
+      const floor = lightness(palette.floor);
+      expect(Math.abs(lightness(palette.exit) - floor)).toBeGreaterThan(15);
+      expect(Math.abs(lightness(palette.frontier) - floor)).toBeGreaterThan(15);
+      // An exit leads somewhere that exists and a frontier is an edge the world stops at. The scene
+      // draws them as a closed ring and a broken one, so shape carries the difference on its own —
+      // but they must not be literally the same paint on top of that.
+      expect(palette.exit).not.toBe(palette.frontier);
+    },
+  );
+
   it.each(THEMES)('%s names every token, in the same shape', (name) => {
     const palette = paletteFor(name);
     expect(Object.keys(palette).sort()).toEqual(Object.keys(paletteFor(otherTheme(name))).sort());

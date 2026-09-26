@@ -48,7 +48,8 @@
         /* The model writes as much prose as it likes. Without a ceiling the panel grows past the
            viewport and pushes GO off the bottom of the screen, which is unreachable rather than
            merely ugly. Bound the panel, and let the text blocks inside it scroll. */
-        max-height: calc(100vh - 24px);
+        /* Stops clear of `#ways` at the bottom of the same column (ALE-51). */
+        max-height: calc(68vh - 12px);
         display: flex;
         flex-direction: column;
         font-size: 13px;
@@ -154,14 +155,14 @@
         margin-top: 6px;
         color: var(--dl-button, #c8d3dd);
         font-style: italic;
-        max-height: 26vh;
+        max-height: 20vh;
         overflow-y: auto;
       }
       #deliberate .dl-reactions {
         margin: 8px 0 0;
         padding-left: 18px;
         color: var(--dl-warn, #ffb86b);
-        max-height: 22vh;
+        max-height: 16vh;
         overflow-y: auto;
       }
       #deliberate #go {
@@ -372,6 +373,98 @@
         border-top: 1px solid var(--dl-panel-edge, #22303d);
         border-bottom: 1px solid var(--dl-panel-edge, #22303d);
       }
+      /* Ways out of here (ALE-51). Bottom of the right-hand column, under the controls, because
+         "where can I go from here" is a standing question about the map rather than a transient
+         hint — the player who filed this walked the whole perimeter and concluded they were boxed
+         in. `#deliberate` gives up the bottom third of the column for it; its prose blocks already
+         scroll internally, so what it loses is empty space and not content. */
+      #ways {
+        position: fixed;
+        right: 12px;
+        bottom: 12px;
+        width: 280px;
+        box-sizing: border-box;
+        max-height: 30vh;
+        overflow-y: auto;
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--dl-text, #e8eef4);
+        background: var(--dl-panel, rgba(11, 17, 23, 0.86));
+        border: 1px solid var(--dl-panel-edge, #22303d);
+        border-radius: 8px;
+        padding: 8px 10px 10px;
+        text-shadow: var(--dl-text-shadow, 0 1px 2px rgba(0, 0, 0, 0.85));
+      }
+      #ways .way-title {
+        color: var(--dl-text-muted, #8496a8);
+        font-size: 12px;
+        letter-spacing: 0.05em;
+      }
+      #ways .way-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        width: 100%;
+        margin-top: 7px;
+        padding: 5px 6px;
+        font: inherit;
+        text-align: left;
+        color: inherit;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      #ways .way-row:hover {
+        background: color-mix(in srgb, currentColor 8%, transparent);
+      }
+      /* You are standing on this one, so it is the only one you can act on this instant. */
+      #ways .way-row.is-here {
+        border-color: currentColor;
+      }
+      #ways .way-row.is-exit {
+        color: var(--dl-exit, #3ff0a3);
+      }
+      #ways .way-row.is-frontier {
+        color: var(--dl-frontier, #e7eef5);
+      }
+      /* The legend. Exactly what the board draws: a closed ring is a door to somewhere that
+         exists, a broken one is an edge nothing has been written past. Shape first, so it reads
+         in greyscale and in both themes. */
+      #ways .way-glyph {
+        flex: none;
+        width: 13px;
+        height: 13px;
+        margin-top: 3px;
+        border-radius: 50%;
+        border: 2px solid currentColor;
+      }
+      #ways .way-row.is-frontier .way-glyph {
+        border-style: dashed;
+      }
+      #ways .way-body {
+        flex: 1;
+        min-width: 0;
+      }
+      #ways .way-label {
+        color: var(--dl-text, #e8eef4);
+      }
+      #ways .way-note {
+        color: var(--dl-text-muted, #8496a8);
+        font-size: 12px;
+      }
+      #ways .way-row.is-here .way-note {
+        color: inherit;
+      }
+      /* The ALE-39 mode line for frontiers: with deliberate mode off no model is consulted, so
+         this edge cannot be crossed at all. Said out loud rather than failing silently. */
+      #ways .way-mode {
+        margin-top: 8px;
+        padding-top: 6px;
+        border-top: 1px solid var(--dl-panel-edge, #22303d);
+        color: var(--dl-warn, #ffb86b);
+        font-size: 12px;
+      }
       /* The turn-order strip (ALE-19). Top-centre, clear of the panel on the right and the HUD at
          the bottom left, because in a fight it is the thing you look at most. Hidden outright
          when there is no encounter: an empty strip would imply an order that does not exist. */
@@ -465,6 +558,7 @@
     <div id="dialogue" hidden></div>
     <div id="hud"></div>
     <div id="deliberate"></div>
+    <div id="ways" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

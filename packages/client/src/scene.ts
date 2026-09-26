@@ -60,6 +60,26 @@ const CAPSULE_RADIUS = 0.3;
 const CAPSULE_LENGTH = 0.62;
 const CAPSULE_HALF = CAPSULE_RADIUS + CAPSULE_LENGTH / 2;
 
+/**
+ * Waymarks (ALE-51): the rings that say a tile is a way off this map.
+ *
+ * The outer radius sits just inside the tile and the inner one outside `CAPSULE_RADIUS`, so the
+ * ring still shows as a halo round the feet of whoever is standing in the doorway — which is
+ * precisely the moment the player needs to see it.
+ *
+ * An exit is **one closed ring**: a way that goes somewhere, complete. A frontier is the same
+ * ring **broken into arcs**: a line drawn where a door could go, not built yet. The difference is
+ * in the shape before it is in the colour, so it survives a theme switch, a colour-blind eye and
+ * a greyscale screenshot.
+ */
+const WAY_INNER = 0.34;
+const WAY_OUTER = 0.46;
+const FRONTIER_ARCS = 4;
+/** How much of each quarter turn is drawn. The rest is the gap that makes it read as unfinished. */
+const FRONTIER_DUTY = 0.55;
+/** Clear of the hover highlight and the click marker, which both live under 0.09. */
+const WAY_LIFT = 0.11;
+
 /** How far the board extends past the map, in tiles. The visible edge of the composition. */
 const BOARD_MARGIN = 0.55;
 const BOARD_THICKNESS = 0.9;
@@ -108,6 +128,12 @@ export interface GameScene {
   setHover(tile: Tile | null): void;
   /** The tile the player clicked with nothing selected. Null clears the marker. */
   setTileMarker(tile: Tile | null): void;
+  /**
+   * The waymarks actually in the scene graph (ALE-51), read back rather than recomputed. What
+   * the map *says* it has and what is drawn are different claims, and the bug was the gap
+   * between them; only this can tell the acceptance suite a marker really reached the board.
+   */
+  drawnWaymarks(): { kind: 'exit' | 'frontier'; x: number; y: number }[];
   /** 1 fits the whole map; larger moves the camera in. Clamped to sensible bounds. */
   setZoom(zoom: number): void;
   /**
@@ -142,7 +168,10 @@ export function createGameScene(palette: Palette): GameScene {
   const camera = new OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
   const tiles = new Group();
   const actors = new Group();
-  scene.add(tiles, actors);
+  // Its own group, and never raycast against (`pick` looks at actors and tiles only): a waymark
+  // is a label painted on the floor, so clicking one has to be clicking the tile under it.
+  const waymarks = new Group();
+  scene.add(tiles, actors, waymarks);
 
   // --- the rig -----------------------------------------------------------------------------
   // Key: from the screen's upper left and only 45 degrees up, so shadows are as long as the thing
@@ -225,6 +254,42 @@ export function createGameScene(palette: Palette): GameScene {
     mesh.material.color.set(tileColor(colors, data.cell, data.tile));
   };
 
+  /**
+   * Draws the map's exits and frontiers. Rebuilt with the board, because a way off the map is
+   * terrain: it belongs to the map, not to what is selected or whose turn it is, and it is on
+   * screen from the moment you arrive. Unlit like every other signal (rule 2 at the top of this
+   * file) — a doorway you cannot find is the bug, so no lighting change may be allowed to dim it.
+   */
+  const setWaymarks = (next: MapRecord): void => {
+    for (const child of [...waymarks.children]) {
+      waymarks.remove(child);
+      if (child instanceof Mesh) {
+        child.geometry.dispose();
+        child.material.dispose();
+      }
+    }
+    const ring = (kind: 'exit' | 'frontier', at: Tile, start: number, sweep: number): void => {
+      const mesh = new Mesh(
+        new RingGeometry(WAY_INNER, WAY_OUTER, 40, 1, start, sweep),
+        new MeshBasicMaterial({
+          color: new Color(kind === 'exit' ? colors.exit : colors.frontier),
+        }),
+      );
+      mesh.rotation.x = -Math.PI / 2;
+      const point = tileToWorld(next, at.x, at.y);
+      mesh.position.set(point.x, visualTopY(next, at) + WAY_LIFT, point.z);
+      mesh.userData = { way: kind, tile: { x: at.x, y: at.y } };
+      waymarks.add(mesh);
+    };
+    for (const exit of next.exits ?? []) ring('exit', exit.at, 0, Math.PI * 2);
+    for (const frontier of next.frontiers ?? []) {
+      const step = (Math.PI * 2) / FRONTIER_ARCS;
+      for (let i = 0; i < FRONTIER_ARCS; i += 1) {
+        ring('frontier', frontier.at, i * step, step * FRONTIER_DUTY);
+      }
+    }
+  };
+
   const setMap = (next: MapRecord): void => {
     map = next;
     disposeGroup(tiles);
@@ -257,6 +322,7 @@ export function createGameScene(palette: Palette): GameScene {
     board.scale.set(width, 1, depth);
     board.position.set(0, BOARD_TOP - BOARD_THICKNESS / 2, 0);
     board.visible = true;
+    setWaymarks(next);
     fitShadowCamera(next);
     frameCamera();
   };
@@ -549,6 +615,13 @@ export function createGameScene(palette: Palette): GameScene {
     hover.material.color.set(colors.hover);
     marker.material.color.set(colors.marker);
     ring.material.color.set(colors.select);
+    for (const mesh of waymarks.children) {
+      if (!(mesh instanceof Mesh)) continue;
+      const { way } = mesh.userData as { way: 'exit' | 'frontier' };
+      (mesh.material as MeshBasicMaterial).color.set(
+        way === 'exit' ? colors.exit : colors.frontier,
+      );
+    }
     for (const mesh of tiles.children) {
       if (mesh instanceof Mesh) paintTile(mesh as Mesh<BoxGeometry, MeshStandardMaterial>);
     }
@@ -597,6 +670,18 @@ export function createGameScene(palette: Palette): GameScene {
     setCollapse,
     setHover,
     setTileMarker,
+    drawnWaymarks: () =>
+      // One frontier is four arcs, so the same tile appears once per mesh; dedupe by tile.
+      [
+        ...new Map(
+          waymarks.children.flatMap((child) => {
+            if (!(child instanceof Mesh)) return [];
+            const data = child.userData as { way: 'exit' | 'frontier'; tile: Tile };
+            const entry = { kind: data.way, x: data.tile.x, y: data.tile.y };
+            return [[`${data.way}:${data.tile.x},${data.tile.y}`, entry] as const];
+          }),
+        ).values(),
+      ],
     setZoom,
     panByPixels,
     recentre,
