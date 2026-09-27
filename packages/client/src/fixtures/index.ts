@@ -53,7 +53,14 @@ export function parseMapRows(id: string, rows: readonly string[]): MapRecord {
 }
 
 export function fixtureMap(): MapRecord {
-  return parseMapRows(FIXTURE_MAP_ID, FIXTURE_MAP_ROWS);
+  return {
+    ...parseMapRows(FIXTURE_MAP_ID, FIXTURE_MAP_ROWS),
+    // An undefined edge, so `?fixture=1` can show a frontier marker with no server and no model
+    // behind it (ALE-51). No exit: an exit has to lead to a map that is loaded, and the yard has
+    // no neighbour — a door onto nothing would be exactly the dishonesty `MapFrontier` exists to
+    // avoid.
+    frontiers: [{ at: { x: 5, y: 1 }, label: 'a gap in the yard wall, and the road past it' }],
+  };
 }
 
 function actor(

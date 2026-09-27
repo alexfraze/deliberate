@@ -14,7 +14,11 @@ import { expect, test } from '@playwright/test';
  * the strip tracking initiative, and the dead still on screen and marked down at the end.
  */
 interface Hooked {
-  deliberate: { pending(): number; board(): { width: number; height: number } | null };
+  deliberate: {
+    pending(): number;
+    board(): { width: number; height: number } | null;
+    waymarks(): { kind: 'exit' | 'frontier'; x: number; y: number }[];
+  };
 }
 
 const RECORDING = 'yard-brawl';
@@ -165,6 +169,54 @@ test('a location the game master wrote is drawn by the real renderer', async ({ 
       intervals: [500],
     })
     .toBe(0);
+
+  expect(pageErrors).toEqual([]);
+});
+
+/**
+ * The ALE-51 done-when, in a browser: **a player who has not read the source can find the way
+ * out of the gatehouse, and can tell a door to somewhere from an edge where the world stops.**
+ *
+ * `beyond-the-lane.jsonl` is the M4 acceptance session, so it opens on the gatehouse with its
+ * one authored exit and walks through the postern into the lane, which carries an exit *and* a
+ * frontier. Free to run: no server, no model, just the transcript through the real render path.
+ *
+ * Two claims, and they are different ones. The list is what a player reads; `waymarks()` reads
+ * the scene graph back, because "the map has an exit" and "a marker reached the board" are not
+ * the same sentence — and the gap between them is exactly what ALE-51 was.
+ */
+test('a way off the map is marked on the board and named in the list', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
+  await page.goto('/?replay=beyond-the-lane');
+  await expect(page.locator('#app canvas')).toBeVisible();
+
+  // The gatehouse: one door, drawn, and named by the label its author wrote for a human.
+  const ways = page.locator('#ways');
+  await expect(ways).toBeVisible();
+  await expect(ways).toContainText('the postern lane');
+  // The interaction nobody could guess. It is said in words or it may as well not exist.
+  await expect(ways).toContainText('click your own tile');
+  expect(await page.evaluate(() => (window as unknown as Hooked).deliberate.waymarks())).toEqual([
+    { kind: 'exit', x: 1, y: 10 },
+  ]);
+
+  // Through the postern and into the lane, where the world runs out. An exit and a frontier are
+  // different things, so the board draws two markers and the list names both.
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as Hooked).deliberate.waymarks()), {
+      timeout: 120_000,
+      intervals: [500],
+    })
+    .toEqual([
+      { kind: 'exit', x: 1, y: 0 },
+      { kind: 'frontier', x: 8, y: 5 },
+    ]);
+  await expect(ways).toContainText('the gatehouse yard');
+  await expect(ways).toContainText('spoil heap');
+  expect(await ways.locator('.way-row.is-exit').count()).toBe(1);
+  expect(await ways.locator('.way-row.is-frontier').count()).toBe(1);
 
   expect(pageErrors).toEqual([]);
 });

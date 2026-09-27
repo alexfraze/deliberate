@@ -17,6 +17,7 @@
  * | amber   | attention — selection, hover, whose turn it is, kills |
  * | coral   | harm — damage numbers, refusals                       |
  * | violet  | the third faction                                     |
+ * | green   | a way off the map that leads somewhere (ALE-51)       |
  *
  * Everything is a `#rrggbb` string so a single token can feed both a three.js `Color` and a CSS
  * custom property. That is the point of the file: the scene and the DOM overlay cannot drift
@@ -65,6 +66,18 @@ export interface Palette {
   readonly kill: string;
   /** What a struck unit flashes toward. */
   readonly flash: string;
+  /**
+   * A way off this map onto one that exists (ALE-51). Exit-sign green, because that is the one
+   * reading a stranger already has for it, and because green is the only strong hue on the board
+   * that belongs to neither the ground, a faction, nor an alarm.
+   */
+  readonly exit: string;
+  /**
+   * An edge nothing has been written past yet (ALE-51). Chalk rather than paint: a frontier is a
+   * line drawn on the ground where a door *could* go, so it is deliberately the least coloured
+   * signal in the set — the absence of a hue is the message.
+   */
+  readonly frontier: string;
 
   // --- factions --------------------------------------------------------------------------------
   readonly factions: Readonly<Record<string, string>>;
@@ -110,6 +123,8 @@ const DARK: Palette = {
   damage: '#ff6b5a',
   kill: '#ffd166',
   flash: '#fff0e6',
+  exit: '#3ff0a3',
+  frontier: '#e7eef5',
 
   factions: {
     party: '#4cc2ff',
@@ -158,6 +173,8 @@ const LIGHT: Palette = {
   damage: '#c62f1c',
   kill: '#9a6100',
   flash: '#fff4ea',
+  exit: '#0a7c4a',
+  frontier: '#3b4a59',
 
   factions: {
     party: '#0f66c2',
@@ -294,6 +311,8 @@ export function cssVariables(palette: Palette): Readonly<Record<string, string>>
     '--dl-good': palette.good,
     '--dl-damage': palette.damage,
     '--dl-kill': palette.kill,
+    '--dl-exit': palette.exit,
+    '--dl-frontier': palette.frontier,
     '--dl-text-shadow': palette.textShadow,
   };
 }

@@ -32,7 +32,7 @@ import { initiativeView } from './initiative.js';
 import { createDeliberatePanel } from './panel.js';
 import { createRenderer } from './renderer.js';
 import { createGameScene } from './scene.js';
-import { exitAt, resolvePick, type Pick, type PickWorld } from './selection.js';
+import { resolvePick, type Pick, type PickWorld } from './selection.js';
 import { createSpeculator } from './speculate.js';
 import { SELF_FACTION, createDialogueThread } from './thread.js';
 import { NO_GM } from './deliberate.js';
@@ -46,6 +46,7 @@ import {
   type Transport,
 } from './transport.js';
 import { applyDiffToView, emptyView, viewFromSnapshot, type ViewState } from './view.js';
+import { createWaysPanel, describeWayHover, summariseWays, wayAt, waysOf } from './ways.js';
 
 const app = document.getElementById('app') ?? document.body;
 const hudElement =
@@ -56,6 +57,8 @@ const panelElement =
   document.getElementById('deliberate') ?? document.body.appendChild(document.createElement('div'));
 const dialogueElement =
   document.getElementById('dialogue') ?? document.body.appendChild(document.createElement('div'));
+const waysElement =
+  document.getElementById('ways') ?? document.body.appendChild(document.createElement('div'));
 
 /**
  * The theme (ALE-34). One token set drives both the DOM overlay and the three.js scene, so the
@@ -114,6 +117,52 @@ const dialogue = createDialogueThread(dialogueElement, {
     Object.values(view.entities).find((entity) => entity.faction === SELF_FACTION)?.id ?? null,
   onLayout: () => resize(),
 });
+
+/**
+ * Ways out of here (ALE-51). Exits and frontiers were drawn nowhere and named nowhere, so a
+ * player who could not see the door concluded the world was a box. This is the standing answer
+ * to "where can I go from here"; the rings on the board are the other half.
+ */
+const ways = createWaysPanel(waysElement, {
+  // Hovering a row lights the tile on the board, which is what turns a label into a place.
+  onHoverTile: (tile) => scene.setHover(tile ?? hovered),
+  onPickTile: (tile) => {
+    scene.setTileMarker(tile);
+    hud.setHint(describeTile(view.map, tile));
+  },
+});
+
+/** The entity a click would move: the selected one, or failing that the player character. */
+function standingTile(): Tile | null {
+  const id = selected ?? view.player;
+  const entity = id === null ? undefined : view.entities[id];
+  return entity && entity.map === view.mapId ? entity.tile : null;
+}
+
+function refreshWays(): void {
+  ways.render(waysOf(view.map, standingTile()), panel.isOn());
+}
+
+/** The last tile we told the player they were standing on, so the line is said once per arrival. */
+let underfoot: string | null = null;
+
+/**
+ * Say it the moment they step onto one. The interaction — click your own tile — is the single
+ * least guessable thing in the client, and the moment it becomes available is the only moment
+ * saying so is worth a line of the HUD.
+ *
+ * `silent` records where they are standing without saying anything, which is what a crossing
+ * wants: you always land on the door you came through, so announcing it would talk over the
+ * arrival line naming the place you have just reached — and the list already marks that row.
+ */
+function announceUnderfoot(silent = false): void {
+  const tile = standingTile();
+  const way = tile === null ? null : wayAt(view.map, tile, tile);
+  const key = way === null ? null : `${way.kind}:${way.tile.x},${way.tile.y}`;
+  if (key === underfoot) return;
+  underfoot = key;
+  if (way && !silent) hud.setHint(describeWayHover(way, panel.isOn()));
+}
 
 const fixtureMode = useFixtureMode(location.search, location.hash);
 /** `?replay=<name>` watches a recorded bank session play back (ALE-19). Nothing is interactive. */
@@ -194,7 +243,14 @@ function enterMap(): void {
   zoom = 1;
   resize();
   if (selected !== null && view.entities[selected]?.map !== view.mapId) setSelected(null);
-  hud.setHint(`You are on ${view.mapId}.`);
+  refreshWays();
+  announceUnderfoot(true);
+  hud.setHint(`You are on ${view.mapId} — ${waysHere()}.`);
+}
+
+/** What this board offers, for the arrival line. See `summariseWays`. */
+function waysHere(): string {
+  return summariseWays(waysOf(view.map, standingTile()));
 }
 
 function describeSelection(id: EntityId | null): string | null {
@@ -215,6 +271,8 @@ function setSelected(id: EntityId | null): void {
   selected = id;
   scene.setSelected(id);
   hud.setSelection(describeSelection(id));
+  // Which way out you are standing in depends on who is selected, so the list moves with it.
+  refreshWays();
 }
 
 /**
@@ -251,7 +309,10 @@ function onMessage(message: ServerMessage): void {
       speculator.turn(turn);
       awaitingServer = false;
       refreshTurn();
-      hud.setHint(`joined · ${Object.keys(view.entities).length} entities on ${view.mapId}`);
+      refreshWays();
+      hud.setHint(
+        `joined · ${Object.keys(view.entities).length} entities on ${view.mapId} — ${waysHere()}`,
+      );
       return;
     }
     case 'diffs': {
@@ -405,6 +466,8 @@ function onAnimationEvent(event: QueueEvent): void {
     if (view.mapId !== was) enterMap();
     scene.syncEntities(view);
     refreshTurn();
+    refreshWays();
+    announceUnderfoot();
     if (selected !== null) hud.setSelection(describeSelection(selected));
   }
 }
@@ -433,10 +496,20 @@ function toNdc(event: PointerEvent | WheelEvent): Vector2 {
 }
 
 let hovered: Tile | null = null;
+/** The way the pointer was last over, so hovering one does not rewrite the hint every frame. */
+let hoveredWay: string | null = null;
 renderer.domElement.addEventListener('pointermove', (event) => {
   const pick = scene.pick(toNdc(event));
   hovered = pick.kind === 'none' ? null : pick.tile;
   scene.setHover(hovered);
+  // The label on hover (ALE-51). Only when the tile under the cursor *is* a way out, and only
+  // when that changes: a way out should name itself, and nothing else should touch this line.
+  const way = hovered === null ? null : wayAt(view.map, hovered, standingTile());
+  const key = way === null ? null : `${way.kind}:${way.tile.x},${way.tile.y}`;
+  if (key !== hoveredWay) {
+    hoveredWay = key;
+    if (way) hud.setHint(describeWayHover(way, panel.isOn()));
+  }
   renderer.domElement.style.cursor = pick.kind === 'entity' ? 'pointer' : 'default';
   // Dwell, not movement: this only re-arms when the *target* changes, so the clock survives a
   // trembling hand and never starts on a pointer sweeping past.
@@ -446,10 +519,10 @@ renderer.domElement.addEventListener('pointermove', (event) => {
 function describeTile(map: MapRecord | null, tile: Tile): string {
   const cell = map ? cellAt(map, tile) : undefined;
   if (!cell) return `tile (${tile.x}, ${tile.y})`;
-  // An exit is invisible terrain, so the one place a player looks for what a tile is has to say
-  // so — otherwise a doorway is a secret rather than a way out (ALE-43).
-  const exit = exitAt(map, tile);
-  const leads = exit ? ` · leads to ${exit.label ?? exit.to}` : '';
+  // A way off the map is invisible terrain, so the one place a player looks for what a tile is
+  // has to say so — otherwise a doorway is a secret rather than a way out (ALE-43, ALE-51).
+  const way = wayAt(map, tile, standingTile());
+  const leads = way ? ` · ${describeWayHover(way, panel.isOn())}` : '';
   return `tile (${tile.x}, ${tile.y}) · ${cell.walkable ? 'walkable' : 'blocked'} · elevation ${cell.elevation}${leads}`;
 }
 
@@ -575,6 +648,8 @@ panel.onGo(() => {
 panel.onToggle(() => {
   panel.reset();
   hud.setError(null);
+  // Whether a frontier can be crossed at all is a fact about this switch (ALE-39).
+  refreshWays();
 });
 panel.onSpeak(() => {
   const text = panel.text();
@@ -663,6 +738,12 @@ export interface AcceptanceHook {
    * was rendered from a label over somebody else's terrain (ALE-48).
    */
   board(): { width: number; height: number } | null;
+  /**
+   * The waymarks on the board (ALE-51). Read back out of the scene graph rather than off the
+   * map, because "the map has an exit" and "a marker reached the screen" are different claims
+   * and the whole bug was the gap between them.
+   */
+  waymarks(): { kind: 'exit' | 'frontier'; x: number; y: number }[];
 }
 
 (window as unknown as { deliberate: AcceptanceHook }).deliberate = {
@@ -674,4 +755,5 @@ export interface AcceptanceHook {
     const map = scene.map();
     return map ? { width: map.width, height: map.height } : null;
   },
+  waymarks: () => scene.drawnWaymarks(),
 };
