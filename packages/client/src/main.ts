@@ -46,7 +46,7 @@ import {
   type Transport,
 } from './transport.js';
 import { applyDiffToView, emptyView, viewFromSnapshot, type ViewState } from './view.js';
-import { createWaysPanel, describeWayHover, wayAt, waysOf } from './ways.js';
+import { createWaysPanel, describeWayHover, summariseWays, wayAt, waysOf } from './ways.js';
 
 const app = document.getElementById('app') ?? document.body;
 const hudElement =
@@ -150,14 +150,18 @@ let underfoot: string | null = null;
  * Say it the moment they step onto one. The interaction — click your own tile — is the single
  * least guessable thing in the client, and the moment it becomes available is the only moment
  * saying so is worth a line of the HUD.
+ *
+ * `silent` records where they are standing without saying anything, which is what a crossing
+ * wants: you always land on the door you came through, so announcing it would talk over the
+ * arrival line naming the place you have just reached — and the list already marks that row.
  */
-function announceUnderfoot(): void {
+function announceUnderfoot(silent = false): void {
   const tile = standingTile();
-  const way = tile === null ? null : wayAt(view.map, tile);
+  const way = tile === null ? null : wayAt(view.map, tile, tile);
   const key = way === null ? null : `${way.kind}:${way.tile.x},${way.tile.y}`;
   if (key === underfoot) return;
   underfoot = key;
-  if (way) hud.setHint(describeWayHover(way, panel.isOn()));
+  if (way && !silent) hud.setHint(describeWayHover(way, panel.isOn()));
 }
 
 const fixtureMode = useFixtureMode(location.search, location.hash);
@@ -240,26 +244,13 @@ function enterMap(): void {
   resize();
   if (selected !== null && view.entities[selected]?.map !== view.mapId) setSelected(null);
   refreshWays();
-  hud.setHint(arrivalHint());
+  announceUnderfoot(true);
+  hud.setHint(`You are on ${view.mapId} — ${waysHere()}.`);
 }
 
-/**
- * What the HUD says when the board changes. "You are on m1-postern-lane" is a map id, which is
- * not an answer to "where can I go from here" — so the ways off this one are counted in the same
- * breath, and the panel that lists them is pointed at.
- */
-function arrivalHint(): string {
-  const here = waysOf(view.map, standingTile());
-  if (here.length === 0) return `You are on ${view.mapId}. No way off this map is marked.`;
-  const exits = here.filter((way) => way.kind === 'exit').length;
-  const frontiers = here.length - exits;
-  const counted = [
-    exits > 0 ? `${exits} way${exits === 1 ? '' : 's'} out` : null,
-    frontiers > 0 ? `${frontiers} frontier${frontiers === 1 ? '' : 's'}` : null,
-  ]
-    .filter((part) => part !== null)
-    .join(' and ');
-  return `You are on ${view.mapId} — ${counted}, ringed on the board and listed bottom right.`;
+/** What this board offers, for the arrival line. See `summariseWays`. */
+function waysHere(): string {
+  return summariseWays(waysOf(view.map, standingTile()));
 }
 
 function describeSelection(id: EntityId | null): string | null {
@@ -320,7 +311,7 @@ function onMessage(message: ServerMessage): void {
       refreshTurn();
       refreshWays();
       hud.setHint(
-        `joined · ${Object.keys(view.entities).length} entities · ${arrivalHint().toLowerCase()}`,
+        `joined · ${Object.keys(view.entities).length} entities on ${view.mapId} — ${waysHere()}`,
       );
       return;
     }
@@ -513,7 +504,7 @@ renderer.domElement.addEventListener('pointermove', (event) => {
   scene.setHover(hovered);
   // The label on hover (ALE-51). Only when the tile under the cursor *is* a way out, and only
   // when that changes: a way out should name itself, and nothing else should touch this line.
-  const way = hovered === null ? null : wayAt(view.map, hovered);
+  const way = hovered === null ? null : wayAt(view.map, hovered, standingTile());
   const key = way === null ? null : `${way.kind}:${way.tile.x},${way.tile.y}`;
   if (key !== hoveredWay) {
     hoveredWay = key;
@@ -530,7 +521,7 @@ function describeTile(map: MapRecord | null, tile: Tile): string {
   if (!cell) return `tile (${tile.x}, ${tile.y})`;
   // A way off the map is invisible terrain, so the one place a player looks for what a tile is
   // has to say so — otherwise a doorway is a secret rather than a way out (ALE-43, ALE-51).
-  const way = wayAt(map, tile);
+  const way = wayAt(map, tile, standingTile());
   const leads = way ? ` · ${describeWayHover(way, panel.isOn())}` : '';
   return `tile (${tile.x}, ${tile.y}) · ${cell.walkable ? 'walkable' : 'blocked'} · elevation ${cell.elevation}${leads}`;
 }

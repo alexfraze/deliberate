@@ -5,6 +5,7 @@ import {
   describeWay,
   describeWayHover,
   describeWaysMode,
+  summariseWays,
   wayAt,
   waysOf,
   type Way,
@@ -95,6 +96,18 @@ describe('wayAt', () => {
     expect(wayAt(posternLane(), { x: 1, y: 0 })?.kind).toBe('exit');
     expect(wayAt(posternLane(), { x: 4, y: 3 })).toBeNull();
   });
+
+  /**
+   * Found by playing: hovering a door across the map told the player they were standing in it,
+   * because the lookup used the hovered tile as the place you stand. "You are standing in it" is
+   * the sentence that teaches the interaction, and it is worthless if it is said everywhere.
+   */
+  it('only says you are standing in it when you actually are', () => {
+    const lane = posternLane();
+    expect(wayAt(lane, { x: 8, y: 5 })?.here).toBe(false);
+    expect(wayAt(lane, { x: 8, y: 5 }, { x: 4, y: 3 })?.here).toBe(false);
+    expect(wayAt(lane, { x: 8, y: 5 }, { x: 8, y: 5 })?.here).toBe(true);
+  });
 });
 
 describe('describeWay', () => {
@@ -163,5 +176,18 @@ describe('describeWaysMode', () => {
   it('says nothing where there is no frontier to be blocked', () => {
     expect(describeWaysMode(waysOf(gatehouse(), null), false)).toBeNull();
     expect(describeWaysMode([], false)).toBeNull();
+  });
+});
+
+describe('summariseWays', () => {
+  it('counts what this board offers, so the arrival line answers "where can I go"', () => {
+    expect(summariseWays(waysOf(posternLane(), null))).toBe(
+      '1 way out and 1 frontier, ringed on the board and listed bottom right',
+    );
+    expect(summariseWays(waysOf(gatehouse(), null))).toContain('1 way out,');
+  });
+
+  it('says so plainly when there is nowhere to go, rather than nothing at all', () => {
+    expect(summariseWays([])).toBe('no way off this map is marked');
   });
 });

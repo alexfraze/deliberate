@@ -59,7 +59,7 @@ export function fixtureMap(): MapRecord {
     // behind it (ALE-51). No exit: an exit has to lead to a map that is loaded, and the yard has
     // no neighbour — a door onto nothing would be exactly the dishonesty `MapFrontier` exists to
     // avoid.
-    frontiers: [{ at: { x: 10, y: 1 }, label: 'a gap in the yard wall, and the road past it' }],
+    frontiers: [{ at: { x: 5, y: 1 }, label: 'a gap in the yard wall, and the road past it' }],
   };
 }
 

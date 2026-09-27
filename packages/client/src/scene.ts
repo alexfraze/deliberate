@@ -72,8 +72,8 @@ const CAPSULE_HALF = CAPSULE_RADIUS + CAPSULE_LENGTH / 2;
  * in the shape before it is in the colour, so it survives a theme switch, a colour-blind eye and
  * a greyscale screenshot.
  */
-const WAY_INNER = 0.34;
-const WAY_OUTER = 0.46;
+const WAY_INNER = 0.31;
+const WAY_OUTER = 0.48;
 const FRONTIER_ARCS = 4;
 /** How much of each quarter turn is drawn. The rest is the gap that makes it read as unfinished. */
 const FRONTIER_DUTY = 0.55;
@@ -269,17 +269,29 @@ export function createGameScene(palette: Palette): GameScene {
       }
     }
     const ring = (kind: 'exit' | 'frontier', at: Tile, start: number, sweep: number): void => {
-      const mesh = new Mesh(
-        new RingGeometry(WAY_INNER, WAY_OUTER, 40, 1, start, sweep),
-        new MeshBasicMaterial({
-          color: new Color(kind === 'exit' ? colors.exit : colors.frontier),
-        }),
-      );
-      mesh.rotation.x = -Math.PI / 2;
       const point = tileToWorld(next, at.x, at.y);
-      mesh.position.set(point.x, visualTopY(next, at) + WAY_LIFT, point.z);
-      mesh.userData = { way: kind, tile: { x: at.x, y: at.y } };
-      waymarks.add(mesh);
+      const color = kind === 'exit' ? colors.exit : colors.frontier;
+      // Drawn twice: solid where it can be seen, and a faint copy with depth testing off so the
+      // same ring still shows through whatever stands in front of it. A way off the map sits on
+      // the map's edge by definition, which means against a wall, and the fixed isometric camera
+      // has no way round one — a doorway you cannot see is the whole of this bug, so it does not
+      // get to hide behind terrain either.
+      for (const occluded of [false, true]) {
+        const mesh = new Mesh(
+          new RingGeometry(WAY_INNER, WAY_OUTER, 40, 1, start, sweep),
+          new MeshBasicMaterial({
+            color: new Color(color),
+            depthTest: !occluded,
+            transparent: occluded,
+            opacity: occluded ? 0.4 : 1,
+          }),
+        );
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(point.x, visualTopY(next, at) + WAY_LIFT, point.z);
+        mesh.renderOrder = occluded ? 1 : 0;
+        mesh.userData = { way: kind, tile: { x: at.x, y: at.y } };
+        waymarks.add(mesh);
+      }
     };
     for (const exit of next.exits ?? []) ring('exit', exit.at, 0, Math.PI * 2);
     for (const frontier of next.frontiers ?? []) {

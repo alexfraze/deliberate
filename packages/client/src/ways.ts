@@ -64,9 +64,17 @@ export function waysOf(map: MapRecord | null, standing: Tile | null): Way[] {
   return ways.sort((a, b) => Number(b.here) - Number(a.here));
 }
 
-/** The way at `tile`, or null. Exits win over frontiers; the engine never puts both on one tile. */
-export function wayAt(map: MapRecord | null, tile: Tile): Way | null {
-  return waysOf(map, tile).find((way) => way.here) ?? null;
+/**
+ * The way at `tile`, or null. Exits win over frontiers; the engine never puts both on one tile.
+ *
+ * `standing` is separate from `tile` on purpose, and the pair is not a nicety: looking a tile up
+ * by standing on it made every hovered door report "you are standing in it", which is a lie
+ * about the one interaction this whole issue exists to teach.
+ */
+export function wayAt(map: MapRecord | null, tile: Tile, standing: Tile | null = null): Way | null {
+  return (
+    waysOf(map, standing).find((way) => way.tile.x === tile.x && way.tile.y === tile.y) ?? null
+  );
 }
 
 /**
@@ -95,6 +103,24 @@ export function describeWay(way: Way, deliberateOn: boolean): string {
 export function describeWayHover(way: Way, deliberateOn: boolean): string {
   const kind = way.kind === 'exit' ? 'way out' : 'frontier';
   return `${kind}: ${way.label} — ${describeWay(way, deliberateOn)}`;
+}
+
+/**
+ * One clause naming what this map offers, for the line the HUD prints on arrival. "You are on
+ * m1-postern-lane" is a map id, which is not an answer to "where can I go from here" — so the
+ * ways off it are counted in the same breath, and the list that names them is pointed at.
+ */
+export function summariseWays(ways: readonly Way[]): string {
+  if (ways.length === 0) return 'no way off this map is marked';
+  const exits = ways.filter((way) => way.kind === 'exit').length;
+  const frontiers = ways.length - exits;
+  const counted = [
+    exits > 0 ? `${exits} way${exits === 1 ? '' : 's'} out` : null,
+    frontiers > 0 ? `${frontiers} frontier${frontiers === 1 ? '' : 's'}` : null,
+  ]
+    .filter((part) => part !== null)
+    .join(' and ');
+  return `${counted}, ringed on the board and listed bottom right`;
 }
 
 /**
