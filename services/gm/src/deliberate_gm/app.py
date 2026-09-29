@@ -7,7 +7,9 @@ tool-call trace with the engine's verdicts, and the updated memory blocks back. 
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -16,7 +18,7 @@ from .agent import GmAgent
 from .config import Settings, live_api_available
 from .contracts import ContractError, ToolContract, load_contract
 from .engine_client import HttpEngineClient
-from .llm import AnthropicLLM, LLMUnavailable
+from .llm import ABANDONED, AnthropicLLM, LLMUnavailable
 from .models import (
     CancelRequest,
     CancelResponse,
@@ -35,6 +37,8 @@ from .policy import (
 )
 from .python_tool import PYTHON_TOOL, PYTHON_TOOL_NAME, make_python_tool
 from .stub_engine import StubEngine
+
+log = logging.getLogger(__name__)
 
 #: The engine token naming Node's one real engine (`packages/server/src/gm/engines.ts`). Turns that
 #: run on it commit as they land, so they are never registered as cancellable: see `/cancel`.
@@ -137,6 +141,7 @@ def create_app(
         token = request.engine_token
         stop = threading.Event()
         abandonable = bool(token) and token != LIVE_ENGINE_TOKEN
+        started = time.monotonic()
         local_tools = {}
         if settings.python_tool_enabled:
             local_tools[PYTHON_TOOL_NAME] = make_python_tool(
@@ -166,6 +171,19 @@ def create_app(
         finally:
             if token is not None:
                 cancels.pop(token, None)
+        if response.stop_reason == ABANDONED:
+            # The one place this is visible from outside the process. Node aborted the request that
+            # would have carried this response, so the numbers would otherwise vanish -- and they
+            # are the evidence that an abandoned turn stopped generating rather than merely stopped
+            # being read: a finished preview's output tokens run to thousands.
+            log.warning(
+                "turn %s on %s abandoned after %.1fs: %s output tokens billed, %s tool calls made",
+                request.turn,
+                token,
+                time.monotonic() - started,
+                response.usage.output_tokens,
+                len(response.trace),
+            )
         if draft.code is not None:
             response.policy = PolicyProgram(code=draft.code, note=draft.note)
         return response
