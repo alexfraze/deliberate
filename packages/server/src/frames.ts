@@ -176,6 +176,16 @@ export function parseClientFrame(text: string): FrameResult {
       }
       return { ok: true, message: { type: 'speculate', room, turn: turn as number, intent } };
     }
+    // ALE-52. The player pressed Escape: stop the preview in flight. It carries the turn it was
+    // composed against for symmetry with every other frame, but nothing here checks it against the
+    // room's — what this stops is whatever is running, and a stale turn is all the more reason to.
+    case 'abandon': {
+      const turn = value['turn'];
+      if (!Number.isInteger(turn) || (turn as number) < 0) {
+        return bad('An abandon must carry the turn number it was composed against.');
+      }
+      return { ok: true, message: { type: 'abandon', room, turn: turn as number } };
+    }
     default:
       return bad(`Unknown frame type ${JSON.stringify(value['type']) ?? 'undefined'}.`);
   }

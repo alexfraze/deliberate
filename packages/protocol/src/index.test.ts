@@ -32,10 +32,10 @@ describe('protocol constants', () => {
 describe('protocol shapes', () => {
   it('discriminates client and server messages on `type`', () => {
     expectTypeOf<ClientMessage['type']>().toEqualTypeOf<
-      'join' | 'intent' | 'preview_request' | 'go' | 'speculate'
+      'join' | 'intent' | 'preview_request' | 'go' | 'speculate' | 'abandon'
     >();
     expectTypeOf<ServerMessage['type']>().toEqualTypeOf<
-      'snapshot' | 'preview' | 'diffs' | 'narration' | 'error'
+      'snapshot' | 'preview' | 'diffs' | 'narration' | 'error' | 'abandoned'
     >();
   });
 

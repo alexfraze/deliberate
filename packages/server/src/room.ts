@@ -1,6 +1,7 @@
 import type { Engine } from '@deliberate/engine';
 import {
   DEFAULT_ROOM,
+  type AbandonMessage,
   type ClientMessage,
   type Diff,
   type GmToolCall,
@@ -62,7 +63,7 @@ export type TurnListener = (commit: TurnCommit) => void;
 /** Handles the GM loop's frames. Installed by `buildApp`; absent means the loop is not running. */
 export type GmFrameHandler = (
   socket: RoomSocket,
-  message: PreviewRequestMessage | GoMessage | SpeculateMessage,
+  message: PreviewRequestMessage | GoMessage | SpeculateMessage | AbandonMessage,
 ) => void;
 
 export interface RoomOptions {
@@ -221,13 +222,14 @@ export function createRoom(options: RoomOptions): Room {
         commitFrame(socket, message);
         return;
       }
-      // `preview_request`, `go` and `speculate` are the GM loop's frames (ALE-32, ALE-40). The
-      // room knows nothing about the game master; `buildApp` installs a handler, and without one
-      // the loop is simply off.
+      // `preview_request`, `go`, `speculate` and `abandon` are the GM loop's frames (ALE-32,
+      // ALE-40, ALE-52). The room knows nothing about the game master; `buildApp` installs a
+      // handler, and without one the loop is simply off.
       if (!gmFrames) {
         // A speculation is a hint, not a request. A server with no game master has nothing to warm
-        // and the player asked for nothing, so there is nothing to tell them.
-        if (message.type !== 'speculate')
+        // and the player asked for nothing, so there is nothing to tell them. An abandon on such a
+        // server is the same kind of nothing: there was never a preview in flight to stop.
+        if (message.type !== 'speculate' && message.type !== 'abandon')
           refuse(socket, 'No game master is running on this server.');
         return;
       }
