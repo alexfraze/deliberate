@@ -671,6 +671,14 @@ panel.onSpeak(() => {
   panel.stage(null);
   askingServer();
   transport.send({ type: 'preview_request', room: DEFAULT_ROOM, turn, intent: null, text });
+  // Sent text has been consumed, exactly as it has after a GO, and leaving it in the box is not
+  // merely untidy — it silently breaks two things. `speculationCandidate` refuses to warm anything
+  // while text is pending (a half-typed key is one nobody will ask for), so a line left sitting
+  // here kills speculative preview for the rest of the session: measured 0 warms and 0/15 cache
+  // hits after one Say / Ask. And because text is part of `previewKey`, the stale sentence rides
+  // along with every later click, changing the key and paying for an answer to a question already
+  // asked.
+  panel.clearText();
 });
 /**
  * Send a button-composed intent: previewed in deliberate mode, committed otherwise. Whether the
