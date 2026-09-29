@@ -20,7 +20,7 @@ from typing import Any, Protocol
 from .config import Settings
 from .contracts import ToolContract
 from .engine_client import EngineClient
-from .llm import LLMClient, LLMRequest, LLMResult
+from .llm import ABANDONED, LLMClient, LLMRequest, LLMResult
 from .memory import blocks as memory_blocks
 from .memory import notes as memory_notes
 from .models import (
@@ -75,6 +75,7 @@ class GmAgent:
         contract: ToolContract,
         settings: Settings,
         local_tools: dict[str, LocalTool] | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> None:
         self._llm = llm
         self._engine = engine
@@ -85,6 +86,10 @@ class GmAgent:
         #: sandboxed `python` tool). They still reach the world only through the engine.
         self._local_tools = local_tools or {}
         self._tool_names = set(contract.names())
+        #: Has the player abandoned this turn (ALE-52)? Asked between steps and, through
+        #: `LLMRequest.cancelled`, between stream events -- the second is the one that stops the
+        #: bill, the first is what stops the *next* call being made at all. Defaults to never.
+        self._cancelled: Callable[[], bool] = cancelled or (lambda: False)
 
     # -- the turn -------------------------------------------------------------------------
 
@@ -105,6 +110,11 @@ class GmAgent:
         max_steps = request.max_tool_steps or self._settings.max_tool_steps
 
         for _ in range(max(1, max_steps)):
+            # Checked before the step as well as inside it: a turn abandoned while the engine was
+            # answering a tool call must not buy another model call on the way out.
+            if self._cancelled():
+                stop_reason = ABANDONED
+                break
             messages = trim_messages(
                 messages,
                 budget=self._settings.input_token_budget,
@@ -117,9 +127,15 @@ class GmAgent:
                     tools=self._tools,
                     stream=True,
                     phase=request.phase,
+                    cancelled=self._cancelled,
                 )
             )
             _accumulate(usage, result.usage)
+            # Stopped mid-generation. There is no content to echo back and no tool call to run:
+            # the stream was closed, which is what makes an abandoned turn stop costing money.
+            if result.abandoned:
+                stop_reason = ABANDONED
+                break
 
             messages.append({"role": "assistant", "content": result.content})
             text = result.text()

@@ -575,7 +575,12 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     previewAbort = controller;
     let result: CachedPreview | { refused: string };
     try {
-      result = await computePreview(message.intent, message.text ?? null, 'preview', controller.signal);
+      result = await computePreview(
+        message.intent,
+        message.text ?? null,
+        'preview',
+        controller.signal,
+      );
     } finally {
       previewAbort = null;
     }

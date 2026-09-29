@@ -173,6 +173,24 @@ class TurnResponse(BaseModel):
 # -- NPC code brains (ALE-37) ----------------------------------------------------------------
 
 
+class CancelRequest(BaseModel):
+    """Node -> Python. Stop the turn running on this engine token (ALE-52).
+
+    The token is the whole address, and that is deliberate. A preview's token names one clone and
+    nothing else, so a cancel can only ever reach the one speculative turn it was meant for -- and
+    the live token is refused outright, because a turn that mutates the real engine as it lands has
+    no safe moment to be stopped at.
+    """
+
+    engine_token: str
+
+
+class CancelResponse(BaseModel):
+    #: Whether a turn was running under that token to be stopped. False is not an error: the call
+    #: may simply have finished on its own between the player's key press and this request.
+    stopping: bool
+
+
 class PolicyRequest(BaseModel):
     """Node -> Python. Run this policy for this NPC's turn. No model is called.
 

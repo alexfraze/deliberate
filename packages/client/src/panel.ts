@@ -51,8 +51,23 @@ export interface DeliberatePanel {
   busy(label: string, timeoutMs?: number): void;
   /** Stop the clock. Safe to call when not busy. */
   idle(): void;
+  /**
+   * The player abandoned the preview that was in flight (ALE-52). Its own method, not `reset`,
+   * because "you stopped that" is a third thing: `reset(reason)` is what a *refusal* looks like on
+   * this column, and neither of them is a failure. The clock stops, the staged action goes, and the
+   * note says what happened in the panel's own voice.
+   */
+  abandoned(note: string): void;
+  /**
+   * Whether there is something the player could abandon: a preview in flight, and not a turn that
+   * is already committing. The client asks before sending, so Escape with nothing running is not a
+   * round trip — the server decides regardless, because it is the one that knows.
+   */
+  isAbandonable(): boolean;
   onGo(handler: () => void): void;
   onToggle(handler: (on: boolean) => void): void;
+  /** The player asked to abandon the preview in flight, from the control or from Escape. */
+  onAbandon(handler: () => void): void;
   /**
    * End the selected entity's turn. Unlike GO this is always available: it is how the player
    * hands initiative to the NPCs, and the engine — not the client — decides whether it is legal.
@@ -125,7 +140,19 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   const encounter = element('div', 'dl-encounter');
 
   const staged = element('div', 'dl-staged');
+  // The waiting indicator, and the way out of it (ALE-52). The control lives here because this is
+  // the thing on screen that says the game master is working — the running clock is already the
+  // affordance a player is looking at when they change their mind.
   const busy = element('div', 'dl-busy');
+  const busyText = document.createElement('span');
+  const abandon = document.createElement('button');
+  abandon.id = 'abandon';
+  abandon.type = 'button';
+  abandon.textContent = 'Abandon (Esc)';
+  abandon.title =
+    'Stop this preview. Nothing is committed, and the model call stops costing money.';
+  abandon.hidden = true;
+  busy.append(busyText, abandon);
   const prose = element('div', 'dl-preview');
   const reactions = document.createElement('ul');
   reactions.className = 'dl-reactions';
@@ -199,17 +226,27 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   // a plain move outside an encounter produces diffs and then silence -- no narration, no error --
   // so a spinner that only stops on those two signals spins forever and lies to the player.
   let busyDeadline = Number.POSITIVE_INFINITY;
+  /**
+   * Whether what is running can be abandoned (ALE-52) — which is to say, whether it is a preview.
+   * Only `stage()` sets it. `committing()` and `narrate()` deliberately do not: after GO the game
+   * master's calls mutate the real engine as they land, so stopping half way would leave the turn
+   * half-applied. The control is not offered for something the server would refuse anyway.
+   */
+  let busyAbandonable = false;
 
   const paintBusy = (): void => {
     if (Date.now() > busyDeadline) return stopBusy();
     const seconds = (Date.now() - busyStart) / 1000;
-    busy.textContent = `${SPINNER[busyFrame % SPINNER.length]} ${busyLabel} · ${seconds.toFixed(1)}s`;
+    busyText.textContent = `${SPINNER[busyFrame % SPINNER.length]} ${busyLabel} · ${seconds.toFixed(1)}s`;
     busyFrame += 1;
   };
 
-  const startBusy = (text: string, timeoutMs?: number): void => {
+  const startBusy = (text: string, timeoutMs?: number, abandonable = false): void => {
     busyLabel = text;
     busyDeadline = timeoutMs === undefined ? Number.POSITIVE_INFINITY : Date.now() + timeoutMs;
+    busyAbandonable = abandonable;
+    abandon.hidden = !abandonable;
+    busy.classList.add('dl-waiting');
     if (busyTimer !== null) return paintBusy(); // re-label, keep the clock running
     busyStart = Date.now();
     busyFrame = 0;
@@ -221,7 +258,10 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     if (busyTimer !== null) clearInterval(busyTimer);
     busyTimer = null;
     busyDeadline = Number.POSITIVE_INFINITY;
-    busy.textContent = '';
+    busyAbandonable = false;
+    abandon.hidden = true;
+    busy.classList.remove('dl-waiting');
+    busyText.textContent = '';
   };
 
   let goHandler: (() => void) | null = null;
@@ -232,6 +272,8 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
   wait.addEventListener('click', () => waitHandler?.());
   let speakHandler: (() => void) | null = null;
   say.addEventListener('click', () => speakHandler?.());
+  let abandonHandler: (() => void) | null = null;
+  abandon.addEventListener('click', () => abandonHandler?.());
   speech.addEventListener('keydown', (event) => {
     // Enter sends, Shift+Enter newlines — the convention every chat box uses.
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -239,6 +281,15 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
       speakHandler?.();
     }
   });
+
+  /**
+   * The preview column. The flag marks a note the player's own cancel put there (ALE-52) rather
+   * than the game master's prose, so no call site can forget to take the marking off again.
+   */
+  const setProse = (text: string, abandoned = false): void => {
+    prose.textContent = text;
+    prose.classList.toggle('dl-abandoned', abandoned);
+  };
 
   const setReactions = (lines: string[]): void => {
     reactions.replaceChildren(
@@ -254,7 +305,7 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     root.classList.toggle('dl-open', on);
     if (!on) {
       staged.textContent = '';
-      prose.textContent = '';
+      setProse('');
       setReactions([]);
       go.disabled = true;
       stopBusy();
@@ -273,20 +324,21 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     isOn: () => toggle.checked,
     stage(intent) {
       staged.textContent = describeStaged(intent, options.nameOf);
-      prose.textContent = '';
-      startBusy('the game master is thinking');
+      setProse('');
+      // The one abandonable phase: a preview runs on a clone and commits nothing.
+      startBusy('the game master is thinking', undefined, true);
       setReactions([]);
       go.disabled = true;
     },
     showPreview(text, diffs) {
       stopBusy();
-      prose.textContent = text;
+      setProse(text);
       setReactions(telegraph(diffs, options.nameOf));
       go.disabled = false;
       noteTurn('previewed');
     },
     committing() {
-      prose.textContent = '';
+      setProse('');
       startBusy('resolving the turn');
       go.disabled = true;
       noteTurn('committed');
@@ -294,7 +346,7 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     reset(note) {
       stopBusy();
       staged.textContent = describeStaged(null, options.nameOf);
-      prose.textContent = note ?? '';
+      setProse(note ?? '');
       setReactions([]);
       go.disabled = true;
     },
@@ -302,7 +354,7 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
       if (chunk) startBusy('narrating');
       if (done) {
         stopBusy();
-        prose.textContent = '';
+        setProse('');
       }
     },
     onGo(handler) {
@@ -328,6 +380,20 @@ export function createDeliberatePanel(root: HTMLElement, options: PanelOptions):
     },
     idle() {
       stopBusy();
+    },
+    abandoned(note) {
+      stopBusy();
+      staged.textContent = describeStaged(null, options.nameOf);
+      // Its own class, so the note reads as a withdrawal rather than as the game master's prose or
+      // as a refusal. Nothing was committed, so there is nothing to telegraph either.
+      setProse(note, true);
+      setReactions([]);
+      go.disabled = true;
+      noteTurn('none');
+    },
+    isAbandonable: () => busyAbandonable,
+    onAbandon(handler) {
+      abandonHandler = handler;
     },
     onEndTurn(handler) {
       endTurnHandler = handler;
