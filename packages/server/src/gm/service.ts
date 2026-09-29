@@ -131,6 +131,21 @@ export interface GmHealth {
 export interface GmService {
   turn(request: GmTurnRequest, options?: GmTurnOptions): Promise<GmTurnResponse>;
   /**
+   * Stop the turn running on `engineToken`, because nobody is going to read its answer (ALE-52).
+   *
+   * **Aborting the `fetch` above is not enough, and the difference is money.** `/turn` is a
+   * *synchronous* FastAPI route, so Starlette runs it in a worker thread: a client that hangs up
+   * has hung up, and the thread keeps streaming from Claude and keeps being billed for every token
+   * it generates. This is the cooperative half — it sets a flag the agent loop checks between
+   * steps and between stream events, and the service closes the model stream, which is the thing
+   * that actually stops the generation.
+   *
+   * Fire and forget by design: it is best-effort cleanup, never something a turn waits on, and a
+   * service too old to have the route answers 404 to no ill effect. Optional because the scripted
+   * stub has no model to stop.
+   */
+  cancel?(engineToken: string): void;
+  /**
    * The service's own `/healthz`, or null when it did not answer. Optional, because the scripted
    * stub has no HTTP behind it. `/healthz` here reports the result so the client can say on screen
    * whether a model is actually in the loop (ALE-39) instead of leaving the player to infer it.
@@ -197,6 +212,16 @@ export function httpGmService(options: HttpGmServiceOptions): GmService {
   return {
     async policy(request, callOptions) {
       return (await post('/policy', request, callOptions)) as GmPolicyResponse;
+    },
+    cancel(engineToken) {
+      // Nothing awaits this and nothing may throw out of it: the caller is a player pressing
+      // Escape, and the worst case of an unreachable service is the bill we were already paying.
+      void doFetch(`${base}/cancel`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ engine_token: engineToken }),
+        signal: AbortSignal.timeout(GM_HEALTH_TIMEOUT_MS),
+      }).catch(() => {});
     },
     async health() {
       try {

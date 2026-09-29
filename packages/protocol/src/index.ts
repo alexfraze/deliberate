@@ -728,8 +728,32 @@ export interface SpeculateMessage {
   intent: Intent;
 }
 
+/**
+ * Abandon the preview in flight (ALE-52). The player changed their mind while the game master was
+ * still thinking, and would rather ask something else than wait out an answer they no longer want.
+ *
+ * **Only a preview can be abandoned, and that is a safety property, not a limitation.** A preview
+ * runs on a cloned engine and commits nothing, so abandoning one has nothing to roll back. After
+ * GO every game master call mutates the real engine as it lands, so stopping mid-resolve would
+ * leave a turn half-applied — the server refuses this frame then, and says so.
+ *
+ * The answer is an `abandoned` frame, never a silence: "you stopped that" is a different thing
+ * from "the server said no" and from "something broke", and the player is owed which one it was.
+ */
+export interface AbandonMessage {
+  type: 'abandon';
+  room: RoomId;
+  /** The turn the player was deliberating on. Informational: what is in flight is what stops. */
+  turn: number;
+}
+
 export type ClientMessage =
-  JoinMessage | IntentMessage | PreviewRequestMessage | GoMessage | SpeculateMessage;
+  | JoinMessage
+  | IntentMessage
+  | PreviewRequestMessage
+  | GoMessage
+  | SpeculateMessage
+  | AbandonMessage;
 
 /** Reply to `join`: the authoritative state and its hash. */
 export interface SnapshotMessage {
@@ -775,8 +799,26 @@ export interface ErrorMessage {
   reason: string;
 }
 
+/**
+ * A preview the player abandoned is over (ALE-52). Distinct from `error` on purpose: nothing was
+ * refused and nothing broke, so a client must not paint this as either. Nothing was committed
+ * either — the preview ran on a clone — so the world is exactly where it was.
+ */
+export interface AbandonedMessage {
+  type: 'abandoned';
+  room: RoomId;
+  turn: number;
+  /** What stopped, in words a player reads. */
+  note: string;
+}
+
 export type ServerMessage =
-  SnapshotMessage | PreviewMessage | DiffsMessage | NarrationMessage | ErrorMessage;
+  | SnapshotMessage
+  | PreviewMessage
+  | DiffsMessage
+  | NarrationMessage
+  | ErrorMessage
+  | AbandonedMessage;
 
 export type ServerMessageType = ServerMessage['type'];
 
@@ -859,6 +901,14 @@ export interface RecordedMeter {
    */
   speculations?: number;
   speculativeUsd?: number;
+  /**
+   * Previews the player abandoned in flight this turn (ALE-52). They are counted apart from
+   * `calls` because a call that was killed mid-generation is not a call that produced anything,
+   * and their tokens are *not* in `tokens`: the abandoned answer never came back, so the only
+   * honest thing this file can say about its cost is that the loop stopped paying for it. Optional
+   * for the same reason as `speculations`; absent reads as zero.
+   */
+  abandoned?: number;
 }
 
 export type RecordingLine = RecordingHeader | RecordedTurn | RecordedMeter;

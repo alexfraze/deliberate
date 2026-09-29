@@ -36,6 +36,12 @@ export interface MeterSummary {
    * `perTurn` here ever approaches a whole preview, the speculation budget is set too high.
    */
   speculation: { count: number; usd: number; perTurn: number };
+  /**
+   * Previews the player abandoned in flight (ALE-52). The claim this number exists to support is
+   * "an abandoned preview is not billed as a completed turn": it rises while `usd` and `calls` do
+   * not, and that is what the meters have to show for the cancel to be worth anything.
+   */
+  abandoned: number;
 }
 
 const NO_PERCENTILES: Percentiles = { p50: 0, p95: 0, mean: 0, max: 0 };
@@ -90,6 +96,7 @@ export function summarize(lines: Iterable<RecordingLine>): MeterSummary {
       usd: sum((m) => m.speculativeUsd ?? 0),
       perTurn: meters.length ? sum((m) => m.speculativeUsd ?? 0) / meters.length : 0,
     },
+    abandoned: sum((m) => m.abandoned ?? 0),
   };
 }
 
@@ -106,5 +113,8 @@ export function formatSummary(summary: MeterSummary): string {
     `tokens     in ${tokens.input}  out ${tokens.output}  cache read ${tokens.cacheRead}  cache write ${tokens.cacheWrite}`,
     `model calls ${summary.calls}  cache hits ${summary.cacheHits}`,
     `speculation ${summary.speculation.count} warmed  $${summary.speculation.perTurn.toFixed(4)}/turn  $${summary.speculation.usd.toFixed(4)} total`,
+    // Printed even at zero: "no preview was abandoned" is a reading of the session too, and a line
+    // that appears only sometimes is a line nobody trusts the absence of.
+    `abandoned  ${summary.abandoned} preview(s) stopped in flight, billed as 0 calls`,
   ].join('\n');
 }

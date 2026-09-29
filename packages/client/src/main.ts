@@ -351,6 +351,16 @@ function onMessage(message: ServerMessage): void {
       dialogue.narrate(message.chunk, message.done);
       return;
     }
+    case 'abandoned': {
+      // Not an error and not an outcome (ALE-52): the player withdrew the question, and the world
+      // is exactly where it was. So it clears the HUD error rather than setting one, and the note
+      // goes to the hint line — the place the client says what just happened, not what went wrong.
+      awaitingServer = false;
+      hud.setError(null);
+      hud.setHint(message.note);
+      panel.abandoned(message.note);
+      return;
+    }
   }
 }
 
@@ -389,6 +399,23 @@ const speculator = createSpeculator({
 function askingServer(): void {
   speculator.cancel();
   awaitingServer = true;
+}
+
+/**
+ * The player changed their mind about the preview in flight (ALE-52). Returns whether anything was
+ * sent, so Escape only swallows the key when it did something.
+ *
+ * The client asks the panel whether there is a preview to abandon, which keeps Escape from being a
+ * round trip when nothing is running — but it is *not* the client's ruling. The server decides, and
+ * a player who presses Escape a beat after GO gets the server's reason for refusing, which is the
+ * one worth reading: a committed turn cannot be stopped half way without leaving the world half
+ * changed. Speculation is disarmed either way; this moment is over.
+ */
+function abandonPreview(): boolean {
+  speculator.cancel();
+  if (!awaitingServer || !panel.isAbandonable()) return false;
+  transport.send({ type: 'abandon', room: DEFAULT_ROOM, turn });
+  return true;
 }
 
 /**
@@ -562,6 +589,13 @@ renderer.domElement.addEventListener('pointerup', endDrag);
 renderer.domElement.addEventListener('pointercancel', endDrag);
 
 window.addEventListener('keydown', (event) => {
+  // Escape first, and deliberately before the typing guard (ALE-52): changing your mind about a
+  // preview is exactly the thing a player does with a half-typed sentence still in the box, and
+  // Escape does nothing else on this page, so there is nothing for it to collide with.
+  if (event.key === 'Escape') {
+    if (abandonPreview()) event.preventDefault();
+    return;
+  }
   // Not while typing into the speech box.
   if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement)
     return;
@@ -644,6 +678,9 @@ panel.onGo(() => {
   askingServer();
   transport.send({ type: 'go', room: DEFAULT_ROOM, turn });
   panel.clearText();
+});
+panel.onAbandon(() => {
+  abandonPreview();
 });
 panel.onToggle(() => {
   panel.reset();

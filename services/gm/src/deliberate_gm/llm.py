@@ -17,10 +17,14 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from .config import Settings
+
+#: `stop_reason` for a call the player abandoned while it was generating (ALE-52). Not an error and
+#: not an `end_turn`: the model was told to stop, so whatever it had produced is not an answer.
+ABANDONED = "abandoned"
 
 
 @dataclass
@@ -35,6 +39,11 @@ class LLMRequest:
     #: everything else uses the game master's own model, because those calls make tool calls
     #: the engine will validate and must reason about the rules.
     phase: str = "preview"
+    #: Asked between stream events: has the player abandoned this turn (ALE-52)? The only way to
+    #: stop *paying* for a call is to stop the generation, and the only place to do that is inside
+    #: the stream -- so the check lives on the request rather than on the client, and the scripted
+    #: fake ignores it. `None` means nothing can cancel this call.
+    cancelled: Callable[[], bool] | None = None
 
 
 @dataclass
@@ -49,6 +58,11 @@ class LLMResult:
     content: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str | None = "end_turn"
     usage: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def abandoned(self) -> bool:
+        """The player stopped this call mid-generation (ALE-52). There is no content to use."""
+        return self.stop_reason == ABANDONED
 
     def text(self) -> str:
         return "".join(
@@ -83,8 +97,9 @@ class ScriptedLLM:
     def create(self, request: LLMRequest) -> LLMResult:
         # A snapshot, not the live object: the loop keeps appending to the same message list
         # after the call returns, and a test asserting on "what was sent" must see what was
-        # actually sent.
-        self.requests.append(copy.deepcopy(request))
+        # actually sent. `cancelled` is dropped first: it is a live handle on a `threading.Event`,
+        # which is not copyable, and a record of what was *sent* has no use for it.
+        self.requests.append(copy.deepcopy(replace(request, cancelled=None)))
         if self.exhausted:
             raise AssertionError(
                 f"ScriptedLLM ran out of replies after {self._index} call(s); the loop asked "
@@ -125,7 +140,24 @@ class AnthropicLLM:
                 # timeout, and `.get_final_message()` gives the accumulated reply.
                 kwargs["max_tokens"] = settings.stream_max_tokens
                 with self._client.messages.stream(**kwargs) as stream:
-                    message = stream.get_final_message()
+                    cancelled = request.cancelled
+                    if cancelled is None:
+                        message = stream.get_final_message()
+                    else:
+                        # Event by event, because this is the *only* place an abandoned turn can
+                        # actually stop costing money (ALE-52). Leaving the `with` closes the HTTP
+                        # response, the server stops generating, and the tokens it has not written
+                        # yet are tokens nobody pays for. Everything upstream of here -- Node's
+                        # aborted fetch, a hung-up socket -- leaves this loop running to completion
+                        # in a FastAPI worker thread, billed in full for an answer nobody reads.
+                        for _ in stream:
+                            if cancelled():
+                                return LLMResult(
+                                    content=[],
+                                    stop_reason=ABANDONED,
+                                    usage=_partial_usage(stream),
+                                )
+                        message = stream.get_final_message()
             else:
                 kwargs["max_tokens"] = settings.max_tokens
                 message = self._client.messages.create(**kwargs)
@@ -143,6 +175,20 @@ class AnthropicLLM:
             stop_reason=message.stop_reason,
             usage=_usage_to_dict(message.usage),
         )
+
+
+def _partial_usage(stream: Any) -> dict[str, int]:
+    """What the abandoned call had been charged for when it was stopped.
+
+    Best effort and never fatal: the snapshot does not exist until the first event has landed, and
+    a cancel that fast has nothing to report. It is logged rather than returned to Node -- Node
+    aborted its own request and is no longer listening -- and it is the number that says out loud
+    how far short of a finished turn an abandoned one stops.
+    """
+    try:
+        return _usage_to_dict(stream.current_message_snapshot.usage)
+    except Exception:  # pragma: no cover - the SDK asserts rather than returning None
+        return {}
 
 
 class LLMUnavailable(RuntimeError):

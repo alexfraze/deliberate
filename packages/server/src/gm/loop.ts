@@ -1,4 +1,6 @@
 import {
+  type AbandonMessage,
+  type AbandonedMessage,
   type Diff,
   type EntityId,
   type GmToolCall,
@@ -62,6 +64,14 @@ import { executeGmToolRequest, type GmToolDeps } from './tool.js';
  * memory without a clone, an HTTP hop or a model call, and so does an NPC's decision (ALE-22). The
  * hash *is* the invalidation: a changed world is a changed key. Nothing cached is authoritative —
  * every call in a cached plan is re-validated against the real engine before it commits.
+ *
+ * **A preview can be abandoned; a committed turn cannot (ALE-52).** The asymmetry is the whole
+ * safety argument. A preview holds a clone and commits nothing, so stopping one has nothing to roll
+ * back: the clone is released, a late tool call on its token is refused by name, and the world's
+ * hash is what it was. After GO each call mutates the real engine *as it lands*, so an abort
+ * between two of them would leave the turn half-applied — earlier mutations committed, later ones
+ * not, and no rollback to reach for. So `abandon` is refused after GO, out loud, and the player is
+ * told why rather than left to discover it.
  *
  * **Resolve takes NPC turns from a skill cache first (ALE-37).** An entity whose `brain.policy` is
  * `gm` gets its turn from, in order: the exact-world decision cache; a *policy* the game master
@@ -211,8 +221,11 @@ export interface GmLoopOptions {
 }
 
 export interface GmLoop {
-  /** Handles one `preview_request`, `go` or `speculate` frame. */
-  handle(socket: RoomSocket, message: PreviewRequestMessage | GoMessage | SpeculateMessage): void;
+  /** Handles one `preview_request`, `go`, `speculate` or `abandon` frame. */
+  handle(
+    socket: RoomSocket,
+    message: PreviewRequestMessage | GoMessage | SpeculateMessage | AbandonMessage,
+  ): void;
   /** The preview `go` would commit, or null. Exposed for tests and for `/healthz`. */
   pending(): PendingPreview | null;
   /** Resolves once every in-flight phase has finished. Tests await this instead of sleeping. */
@@ -289,6 +302,21 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   /** One phase at a time. Two overlapping GOs would interleave mutations on one engine. */
   let inFlight: Promise<void> = Promise.resolve();
   let busy = false;
+  /**
+   * Which phase owns `busy`, so an abandoned one cannot clear the flag out from under the phase
+   * that replaced it (ALE-52). Abandoning frees the loop *immediately* — the player's whole
+   * complaint was waiting — while the call it stopped is still unwinding on `inFlight`; without
+   * this counter that unwind's `finally` would then set `busy = false` in the middle of the next
+   * preview, and two previews would be accepted at once.
+   */
+  let phaseId = 0;
+  /**
+   * The abort for the preview in flight, and `null` whenever nothing abandonable is running. It is
+   * non-null for exactly the phase that is safe to stop: `preview`, which holds a clone and commits
+   * nothing. GO's phases never set it, which is how "you cannot abandon a committed turn" is a
+   * structural fact here rather than a rule someone has to check.
+   */
+  let previewAbort: AbortController | null = null;
   /** Set when a real frame arrives, so speculation stops between intents instead of racing it. */
   let abandonSpeculation = false;
   const speculationBudget = Math.max(0, options.speculationsPerTurn ?? MAX_SPECULATIONS_PER_TURN);
@@ -314,6 +342,21 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   const meter = (): TurnMeter => (turnMeter ??= meters.open(room.turn()));
 
   const refuse = (socket: RoomSocket, reason: string): void => room.refuse(socket, reason);
+
+  /**
+   * "You stopped that" — its own frame, because it is neither of the other two things (ALE-52). An
+   * `error` would be read as a refusal and painted red; a silence would be read as a hang. It goes
+   * to the one socket that asked, like the preview it ends.
+   */
+  const announce = (socket: RoomSocket, note: string): void => {
+    const frame: AbandonedMessage = {
+      type: 'abandoned',
+      room: room.id,
+      turn: room.turn(),
+      note,
+    };
+    socket.send(JSON.stringify(frame));
+  };
 
   /** Calls the service, never throws, and degrades to "no game master answered" on any failure. */
   const ask = async (
@@ -447,6 +490,15 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
     // Nothing may mutate the real world while a preview is in flight, whatever engine token a tool
     // call claims. The clone is the isolation; this is the assertion that it held.
     registry.seal('That was a preview: nothing is committed until the player presses GO.');
+    // Abandoning has to reach the *model*, not just this process. Aborting our own fetch frees the
+    // loop and nothing else: `/turn` is a synchronous route in the GM service, so a dropped
+    // connection leaves a worker thread streaming from Claude and being billed for it. `cancel`
+    // sets the flag that makes the service close that stream. See `GmService.cancel`.
+    if (cancel) {
+      const stopTheModel = (): void => gm?.cancel?.(clone.token);
+      if (cancel.aborted) stopTheModel();
+      else cancel.addEventListener('abort', stopTheModel, { once: true });
+    }
     try {
       const diffs: Diff[] = [];
       if (intent) {
@@ -492,13 +544,20 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       // moment, and caching it would make a blip permanent for as long as the world stands still.
       if (caching && !answer.failed) previews.set(key, entry);
       // Charged against this turn's dollar ceiling, not just its count: a speculation in a fight
-      // pays for the NPC turns the game master took inside it, and those are not free.
-      if (phase === 'speculate') speculation.usd += usdFor(tokensFrom(answer.usage));
+      // pays for the NPC turns the game master took inside it, and those are not free. An
+      // abandoned call has no usage to charge — nothing came back — which is the whole point of
+      // stopping it, and `abandoned` is what says so in the meters rather than a $0.00 nobody can
+      // distinguish from a free one.
+      const abandoned = cancel?.aborted === true;
+      if (phase === 'speculate' && !abandoned) {
+        speculation.usd += usdFor(tokensFrom(answer.usage));
+      }
       meter().record(phase, {
         startedAt,
         endedAt: Date.now(),
         usage: answer.usage,
         failed: answer.failed,
+        ...(abandoned ? { abandoned: true } : {}),
       });
       return entry;
     } finally {
@@ -510,7 +569,26 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
   };
 
   const preview = async (socket: RoomSocket, message: PreviewRequestMessage): Promise<void> => {
-    const result = await computePreview(message.intent, message.text ?? null);
+    // The handle the player's Escape key pulls on. Registered for the life of this phase and only
+    // this phase, so `abandon` can never reach a turn that is already committing.
+    const controller = new AbortController();
+    previewAbort = controller;
+    let result: CachedPreview | { refused: string };
+    try {
+      result = await computePreview(
+        message.intent,
+        message.text ?? null,
+        'preview',
+        controller.signal,
+      );
+    } finally {
+      previewAbort = null;
+    }
+    // Abandoned while it was in the air. Whatever came back describes a question the player
+    // withdrew, so it is not staged, not sent and not cached (`ask` reports the abort as a
+    // failure, and a failed preview was never memoised). The `abandoned` frame went out the
+    // moment they asked; nothing is owed here but silence.
+    if (controller.signal.aborted) return;
     if ('refused' in result) {
       pending = null;
       refuse(socket, result.refused);
@@ -829,6 +907,7 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
       return;
     }
     busy = true;
+    const id = (phaseId += 1);
     // Speculation is work nobody asked for, so a real frame takes the loop back: the flag stops it
     // at the next intent, and chaining on `inFlight` lets the one already in the air unwind first
     // rather than interleaving two previews on one registry.
@@ -841,8 +920,64 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
         log(`gm loop failed: ${error instanceof Error ? error.message : String(error)}`);
       })
       .finally(() => {
-        busy = false;
+        // Only if this phase still owns the flag. An abandoned phase released `busy` when the
+        // player asked (ALE-52) and may be unwinding behind its own replacement; clearing it here
+        // would let a third frame in alongside the second.
+        if (phaseId === id) busy = false;
       });
+  };
+
+  /**
+   * The player changed their mind (ALE-52). Three outcomes, and they are three different things a
+   * player is owed three different answers to:
+   *
+   * - **A preview is in flight.** It is stopped: the model call is aborted here and cancelled at the
+   *   service, the clone is released by `computePreview`'s `finally`, and the loop is handed back at
+   *   once so the next question does not queue behind an answer nobody wants.
+   * - **A committed turn is in flight.** Refused, with the reason. Post-GO the game master's calls
+   *   mutate the real engine as they land, so there is no moment at which stopping is safe: the turn
+   *   would be half-applied and there is nothing to roll back with. That is a rule about the world,
+   *   not a missing feature, so the player is told it.
+   * - **Nothing is in flight.** Answered as an abandonment anyway. Escape is a reflex, a player
+   *   will press it a beat late, and dressing a harmless no-op as an error teaches them to distrust
+   *   the errors that matter.
+   *
+   * A speculation warming in the background is stopped in the first and third cases too: the player
+   * has told us this moment is over, and a guess about it is money with nothing left to buy. The
+   * registry unwedges itself — `speculationAbort` ends the call, `abandonSpeculation` stops the walk
+   * at the next intent, and `speculatingKey` is cleared by `speculate`'s own `finally`.
+   */
+  const abandon = (socket: RoomSocket): void => {
+    const guessing = speculatingKey !== null;
+    if (guessing) {
+      abandonSpeculation = true;
+      speculationAbort?.abort();
+    }
+    if (previewAbort) {
+      const stopped = previewAbort;
+      previewAbort = null;
+      // Freed before the call unwinds, and `phaseId` is what makes that safe: the player asked to
+      // be let go, not to be let go once the game master gets round to answering.
+      phaseId += 1;
+      busy = false;
+      stopped.abort();
+      announce(socket, 'You abandoned that. Nothing was committed — ask for something else.');
+      return;
+    }
+    if (busy) {
+      refuse(
+        socket,
+        'Too late to abandon that: the turn is already committing, and stopping it half way ' +
+          'would leave the world half-changed. It will land in a moment.',
+      );
+      return;
+    }
+    announce(
+      socket,
+      guessing
+        ? 'Nothing was in flight; the preview being warmed in the background has been dropped.'
+        : 'Nothing was in flight to abandon.',
+    );
   };
 
   /**
@@ -916,6 +1051,13 @@ export function createGmLoop(options: GmLoopOptions): GmLoop {
 
   return {
     handle(socket, message) {
+      // Before the turn check, on purpose: what `abandon` stops is whatever is *in flight*, and a
+      // player whose preview is running on a turn the room has since left has all the more reason
+      // to want it stopped. There is nothing here to compose against a stale world.
+      if (message.type === 'abandon') {
+        abandon(socket);
+        return;
+      }
       if (message.type === 'speculate') {
         // A hint about a pointer, never a request. Anything wrong with it — stale turn, no budget,
         // one already running — is answered with silence: the player asked for nothing, and an

@@ -7,6 +7,9 @@ tool-call trace with the engine's verdicts, and the updated memory blocks back. 
 
 from __future__ import annotations
 
+import logging
+import threading
+import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -15,8 +18,16 @@ from .agent import GmAgent
 from .config import Settings, live_api_available
 from .contracts import ContractError, ToolContract, load_contract
 from .engine_client import HttpEngineClient
-from .llm import AnthropicLLM, LLMUnavailable
-from .models import PolicyProgram, PolicyRequest, PolicyResponse, TurnRequest, TurnResponse
+from .llm import ABANDONED, AnthropicLLM, LLMUnavailable
+from .models import (
+    CancelRequest,
+    CancelResponse,
+    PolicyProgram,
+    PolicyRequest,
+    PolicyResponse,
+    TurnRequest,
+    TurnResponse,
+)
 from .policy import (
     SAVE_POLICY_TOOL,
     SAVE_POLICY_TOOL_NAME,
@@ -26,6 +37,12 @@ from .policy import (
 )
 from .python_tool import PYTHON_TOOL, PYTHON_TOOL_NAME, make_python_tool
 from .stub_engine import StubEngine
+
+log = logging.getLogger(__name__)
+
+#: The engine token naming Node's one real engine (`packages/server/src/gm/engines.ts`). Turns that
+#: run on it commit as they land, so they are never registered as cancellable: see `/cancel`.
+LIVE_ENGINE_TOKEN = "live"
 
 
 def create_app(
@@ -39,6 +56,11 @@ def create_app(
     settings = settings or Settings.from_env()
     app = FastAPI(title="Deliberate GM", version="0.1.0")
     state: dict[str, Any] = {"contract": None}
+    #: Turns in flight that a player may still abandon (ALE-52), by the engine token that names the
+    #: clone they run on, and the flag that asks each one to stop. A plain dict guarded by nothing:
+    #: every mutation is a single insert, pop or `Event.set`, all of which are atomic under the GIL,
+    #: and a `/cancel` that loses a race with a turn finishing is a `/cancel` with nothing to do.
+    cancels: dict[str, threading.Event] = {}
 
     def resolve_contract() -> ToolContract:
         if state["contract"] is None:
@@ -112,6 +134,14 @@ def create_app(
     @app.post("/turn", response_model=TurnResponse)
     def turn(request: TurnRequest) -> TurnResponse:
         contract = resolve_contract()
+        # Only a preview is abandonable, and a preview is exactly a turn that runs on a clone. A
+        # turn on the live engine has committed some of its calls by the time anyone could ask it to
+        # stop, so it is not registered here and `/cancel` has no handle on it -- the asymmetry is
+        # enforced at both ends, and this is the end that cannot be talked out of it.
+        token = request.engine_token
+        stop = threading.Event()
+        abandonable = bool(token) and token != LIVE_ENGINE_TOKEN
+        started = time.monotonic()
         local_tools = {}
         if settings.python_tool_enabled:
             local_tools[PYTHON_TOOL_NAME] = make_python_tool(
@@ -130,14 +160,51 @@ def create_app(
             contract=contract,
             settings=settings,
             local_tools=local_tools,
+            cancelled=stop.is_set,
         )
+        if abandonable and token is not None:
+            cancels[token] = stop
         try:
             response = agent.run_turn(request)
         except LLMUnavailable as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        finally:
+            if token is not None:
+                cancels.pop(token, None)
+        if response.stop_reason == ABANDONED:
+            # The one place this is visible from outside the process. Node aborted the request that
+            # would have carried this response, so the numbers would otherwise vanish -- and they
+            # are the evidence that an abandoned turn stopped generating rather than merely stopped
+            # being read: a finished preview's output tokens run to thousands.
+            log.warning(
+                "turn %s on %s abandoned after %.1fs: %s output tokens billed, %s tool calls made",
+                request.turn,
+                token,
+                time.monotonic() - started,
+                response.usage.output_tokens,
+                len(response.trace),
+            )
         if draft.code is not None:
             response.policy = PolicyProgram(code=draft.code, note=draft.note)
         return response
+
+    @app.post("/cancel", response_model=CancelResponse)
+    def cancel(request: CancelRequest) -> CancelResponse:
+        """Stop the turn running on one engine token, because nobody will read its answer (ALE-52).
+
+        This route exists because hanging up is not cancelling. `/turn` is a synchronous route, so
+        Starlette runs it in a worker thread; a client that drops its request drops its request, and
+        the thread keeps streaming from Claude and keeps being billed for every token it generates.
+        Setting the flag is what makes the agent close that stream, which is what actually stops the
+        generation -- and therefore the only thing that makes an abandoned turn stop costing money.
+
+        It returns at once. The turn it stops unwinds on its own thread and its response goes
+        nowhere, which is correct: Node abandoned the request that would have carried it.
+        """
+        stop = cancels.get(request.engine_token)
+        if stop is not None:
+            stop.set()
+        return CancelResponse(stopping=stop is not None)
 
     @app.post("/policy", response_model=PolicyResponse)
     def policy(request: PolicyRequest) -> PolicyResponse:

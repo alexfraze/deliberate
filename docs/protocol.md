@@ -31,13 +31,14 @@ commits only if it matches.
 
 ## Client → server
 
-| type              | fields                            | when                                                         |
-| ----------------- | --------------------------------- | ------------------------------------------------------------ |
-| `join`            | `room`, `protocol`                | First frame. Server replies with `snapshot`.                 |
-| `intent`          | `room`, `turn`, `intent`          | The player commits an action for `turn`, immediately.        |
-| `preview_request` | `room`, `turn`, `intent`, `text?` | Ask for a speculative turn (ALE-32). Commits nothing.        |
-| `go`              | `room`, `turn`                    | Commit the last preview.                                     |
-| `speculate`       | `room`, `turn`, `intent`          | Warm the preview cache for an action being hovered (ALE-40). |
+| type              | fields                            | when                                                                |
+| ----------------- | --------------------------------- | ------------------------------------------------------------------- |
+| `join`            | `room`, `protocol`                | First frame. Server replies with `snapshot`.                        |
+| `intent`          | `room`, `turn`, `intent`          | The player commits an action for `turn`, immediately.               |
+| `preview_request` | `room`, `turn`, `intent`, `text?` | Ask for a speculative turn (ALE-32). Commits nothing.               |
+| `go`              | `room`, `turn`                    | Commit the last preview.                                            |
+| `speculate`       | `room`, `turn`, `intent`          | Warm the preview cache for an action being hovered (ALE-40).        |
+| `abandon`         | `room`, `turn`                    | Stop the preview in flight; the player changed their mind (ALE-52). |
 
 `intent` is one of `move { entity, to }`, `traverse { entity, to }`,
 `attack { attacker, target, ability }`, `cast { caster, spell, target }`,
@@ -108,24 +109,45 @@ A speculation the player contradicts is cancelled rather than waited out: previe
 so a `preview_request` for a different key aborts the guess in the air instead of queueing the
 player behind it. One for the _same_ key is left alone — that is the case this exists for.
 
+`abandon` (ALE-52) is the player saying they do not want the answer any more. It stops whatever is
+in flight rather than whatever `turn` names, which is why nothing here checks that field against the
+room's: a preview running against a turn the room has already left is all the more worth stopping.
+Three answers, and they are three different things:
+
+- **A preview is in flight** → `abandoned`. The model call is aborted _and_ cancelled at the GM
+  service (`POST /cancel`, `docs/gm-service.md`), the clone is released, nothing is staged, nothing
+  is cached, and the loop is handed back at once so the next question is not queued behind the
+  answer nobody wants.
+- **A turn is committing** → `error`, with the reason. See "Preview → GO" below: after GO there is
+  no safe moment to stop.
+- **Nothing is in flight** → `abandoned` anyway. Escape is a reflex and a player will press it a
+  beat late; a harmless no-op dressed as an error teaches them to distrust the real ones.
+
+A speculation warming in the background is stopped in the first and third cases too — the player has
+said this moment is over, and a guess about it has nothing left to buy.
+
 `protocol` must equal `PROTOCOL_VERSION`; a mismatch is refused with an `error` and the socket does
 not join. A socket must `join` before it may send an `intent`.
 
 ## Server → client
 
-| type        | fields                             | when                                                        |
-| ----------- | ---------------------------------- | ----------------------------------------------------------- |
-| `snapshot`  | `room`, `turn`, `snapshot`, `hash` | Reply to `join`, and the resync after a stale `intent`.     |
-| `preview`   | `room`, `turn`, `text`, `diffs`    | Speculative resolution before GO. Nothing in it happened.   |
-| `diffs`     | `room`, `turn`, `diffs`, `hash`    | Committed mutations. The client animates these in order.    |
-| `narration` | `room`, `turn`, `chunk`, `done`    | Streamed prose after a GO. `done` closes the stream.        |
-| `error`     | `room`, `turn`, `reason`           | Rejected intent or protocol error; `reason` is user-facing. |
+| type        | fields                             | when                                                         |
+| ----------- | ---------------------------------- | ------------------------------------------------------------ |
+| `snapshot`  | `room`, `turn`, `snapshot`, `hash` | Reply to `join`, and the resync after a stale `intent`.      |
+| `preview`   | `room`, `turn`, `text`, `diffs`    | Speculative resolution before GO. Nothing in it happened.    |
+| `diffs`     | `room`, `turn`, `diffs`, `hash`    | Committed mutations. The client animates these in order.     |
+| `narration` | `room`, `turn`, `chunk`, `done`    | Streamed prose after a GO. `done` closes the stream.         |
+| `error`     | `room`, `turn`, `reason`           | Rejected intent or protocol error; `reason` is user-facing.  |
+| `abandoned` | `room`, `turn`, `note`             | A preview the player stopped is over (ALE-52). Not an error. |
 
 - `diffs` carries the turn number **after** the commit (`turn + 1`) and the state hash after the
   engine applied them. It is broadcast to every joined socket, not only the sender.
 - `error` is sent only to the socket that caused it. `turn` is the room's current turn, so the
   client always learns where the room is; `null` is reserved for errors raised before a room is
   known and is unused in M0.
+- `abandoned` is sent only to the socket that asked, like the `preview` it ends. It is **not** an
+  `error` and a client must not paint it as one: nothing was refused, nothing broke, and nothing was
+  committed — the preview ran on a clone, so the world is exactly where it was.
 - `reason` is always something a player can read on screen. For a rejected intent it is the
   engine's `Verdict.reason` verbatim ("(3, 4) cannot be walked on.", "Training Dummy A is 30 ft
   away; a Longsword reaches 5 ft."); for a protocol failure the server writes its own.
@@ -158,18 +180,19 @@ Nothing off the wire is trusted. `parseClientFrame` validates a frame completely
 the engine sees it; the room then checks the room id, membership and the turn; only then does the
 engine see the intent, and the engine validates legality itself. Each row below is an `error`.
 
-| Condition                                     | Reason the client gets                                                                                    |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Frame is not JSON, or not a JSON object       | "That frame was not valid JSON." / "…must be a JSON object."                                              |
-| Missing or non-string `room`                  | "That frame is missing a room id."                                                                        |
-| `type` is not a known frame type              | "Unknown frame type …"                                                                                    |
-| `join` with the wrong `protocol`              | "This server speaks protocol N; your client said M…"                                                      |
-| `intent` with a missing or non-integer `turn` | "An intent must carry the turn number it was composed against."                                           |
-| `intent` whose `intent` is not a player one   | "That is not an action this server understands (move, traverse, attack, cast, say, end_turn, pass_time)." |
-| `room` is not this server's room              | "There is no room called "x" on this server."                                                             |
-| `intent` from a socket that never joined      | "Join the room before sending an action."                                                                 |
-| `turn` ≠ the room's turn                      | "That action was composed for turn N; the room is on turn M…" plus a `snapshot`                           |
-| The engine rejects the intent                 | `Verdict.reason`, unchanged                                                                               |
+| Condition                                     | Reason the client gets                                                                                                                             |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frame is not JSON, or not a JSON object       | "That frame was not valid JSON." / "…must be a JSON object."                                                                                       |
+| Missing or non-string `room`                  | "That frame is missing a room id."                                                                                                                 |
+| `type` is not a known frame type              | "Unknown frame type …"                                                                                                                             |
+| `join` with the wrong `protocol`              | "This server speaks protocol N; your client said M…"                                                                                               |
+| `intent` with a missing or non-integer `turn` | "An intent must carry the turn number it was composed against."                                                                                    |
+| `abandon` while a turn is committing          | "Too late to abandon that: the turn is already committing, and stopping it half way would leave the world half-changed. It will land in a moment." |
+| `intent` whose `intent` is not a player one   | "That is not an action this server understands (move, traverse, attack, cast, say, end_turn, pass_time)."                                          |
+| `room` is not this server's room              | "There is no room called "x" on this server."                                                                                                      |
+| `intent` from a socket that never joined      | "Join the room before sending an action."                                                                                                          |
+| `turn` ≠ the room's turn                      | "That action was composed for turn N; the room is on turn M…" plus a `snapshot`                                                                    |
+| The engine rejects the intent                 | `Verdict.reason`, unchanged                                                                                                                        |
 
 An `error` never advances the turn and never mutates state. A malformed frame does not close the
 socket; the next well-formed frame is handled normally.
@@ -204,6 +227,17 @@ client                              server
   commit, so one GO is one turn however many tool calls the game master made inside it.
 - With no game master configured (no `GM_SERVICE_URL`), the loop still runs: the preview shows the
   engine's own resolution of the staged intent and GO commits it.
+
+**A preview can be abandoned; a committed turn cannot (ALE-52), and the asymmetry is a safety
+property rather than a missing feature.** A preview holds a clone and commits nothing, so stopping
+one has nothing to roll back: the clone is released, a late tool call on its token is refused by
+name, and the real engine's hash is untouched. After GO each game master call mutates the real
+engine _as it lands_, so an abort between two of them would leave the turn **half-applied** — the
+earlier mutations committed, the later ones not, and no rollback to reach for. So the two are
+deliberately not behind one control: in `loop.ts` the abort handle is non-null for exactly the
+`preview` phase, GO's phases never set it, and an `abandon` that arrives after GO is refused with
+the reason. The GM service enforces the same line from its own end: a turn on the live engine token
+is never registered as cancellable, so `POST /cancel` cannot reach one.
 
 ## `POST /gm/tool`
 

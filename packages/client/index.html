@@ -141,8 +141,9 @@
         color: var(--dl-accent, #9fd0ff);
       }
       /* The waiting indicator. Visible whether or not deliberate mode is open, because a turn
-         resolves — and NPCs act — on both paths. Empty text collapses it to nothing. */
-      #deliberate .dl-busy:not(:empty) {
+         resolves — and NPCs act — on both paths. `dl-waiting` rather than `:not(:empty)`: the box
+         now holds the Abandon control as well as the clock, so it is never empty (ALE-52). */
+      #deliberate .dl-busy.dl-waiting {
         margin-top: 8px;
         padding: 4px 8px;
         color: var(--dl-select, #ffd166);
@@ -150,6 +151,30 @@
         border-left: 2px solid var(--dl-select, #ffd166);
         border-radius: 3px;
         font-variant-numeric: tabular-nums;
+      }
+      /* Offered only while a *preview* is in flight — the phase that runs on a clone and commits
+         nothing. After GO the panel does not show it, because stopping a turn mid-resolve would
+         leave the world half-changed and the server refuses. */
+      #deliberate #abandon {
+        display: block;
+        margin-top: 4px;
+        padding: 2px 6px;
+        font: inherit;
+        font-size: 12px;
+        color: var(--dl-select, #ffd166);
+        background: transparent;
+        border: 1px solid color-mix(in srgb, var(--dl-select, #ffd166) 45%, transparent);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #deliberate #abandon[hidden] {
+        display: none;
+      }
+      /* A note the player's own cancel put here: neither the game master's prose (italic) nor a
+         refusal (the HUD's error line). */
+      #deliberate .dl-preview.dl-abandoned {
+        color: var(--dl-text-muted, #8496a8);
+        font-style: normal;
       }
       #deliberate .dl-preview {
         margin-top: 6px;

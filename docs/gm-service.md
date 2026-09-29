@@ -101,6 +101,33 @@ ordinary trace line, and a policy is expected to read it and carry on.
 `503` when policies are disabled (`GM_POLICY_TOOL=0`). There is no `502` and no `LLMUnavailable`,
 because there is no model on this path.
 
+### Node → Python: `POST /cancel` (ALE-52)
+
+Stop the turn running on one engine token, because the player abandoned it and nobody will read its
+answer. Request `{engine_token}`, response `{stopping}` — whether a turn was running under that token
+to be stopped. `stopping: false` is not an error: the call may have finished between the player's key
+press and this request.
+
+**This route exists because hanging up is not cancelling, and the difference is money.** `/turn` is a
+_synchronous_ FastAPI route, so Starlette runs it in a worker thread (`run_in_threadpool`). A client
+that aborts its request has aborted its request: the thread keeps streaming from Claude and keeps
+being billed for every token it generates, and Node — which is no longer listening — cannot tell.
+So Node does both. It aborts its own `fetch`, which frees its turn loop at once, and it posts here,
+which sets a `threading.Event` the agent checks between tool steps and, crucially, **between stream
+events**. On a set flag the agent leaves the `with client.messages.stream(...)` block: that closes
+the HTTP response, the model stops generating, and the tokens it has not written are tokens nobody
+pays for. That is the only place in this service where an abandoned turn stops costing money.
+
+The abandoned turn unwinds on its own thread with `stop_reason: "abandoned"`, empty content and
+whatever usage the partial stream had accrued, and its response goes nowhere — Node abandoned the
+request that would have carried it. The service is stateless, so nothing is left behind.
+
+**Only a preview is cancellable, and the service enforces that from its own end.** A turn is
+registered as abandonable only when its `engine_token` is a clone's; the live token is never
+registered, so `/cancel` has no handle on a turn whose calls commit to the real engine as they land.
+Stopping one of those half way would leave the turn half-applied with nothing to roll back — see
+"Preview → GO" in `docs/protocol.md`.
+
 #### `engine_token`
 
 An opaque handle, minted by Node, naming the engine instance a call should act on. Python
@@ -121,6 +148,11 @@ for the clone, and the real engine is untouched until GO (ALE-32 / decision 5).
    model planned the chain on an assumption the engine just disproved. The skipped calls
    still get `tool_result` blocks saying so.
 6. Repeat until the model stops calling tools or `max_tool_steps` is reached.
+
+Between steps, and between the stream events inside step 2, the loop asks whether the player has
+abandoned this turn (ALE-52). If they have it stops there with `stop_reason: "abandoned"`: the stream
+is closed so the generation stops, and no further model call is made for a turn nobody is waiting on.
+See `POST /cancel` above.
 
 ### Tools
 
